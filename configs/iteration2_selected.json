@@ -1,0 +1,15 @@
+{
+  "choice": "cls_attention",
+  "prune_block": 9,
+  "keep_patch_count": 96,
+  "attention_backend": "reference",
+  "predefined": false,
+  "rule": "Highest raw validation mAP among the four class-attention configurations. Rank-1 and median encoder latency were not needed because the mAP values differed by more than 1e-6.",
+  "validation_mAP": 0.9780343793577182,
+  "validation_rank1": 0.9813581890812251,
+  "encoder_saw_these_identities": true,
+  "not_an_unseen_identity_split": true,
+  "random_controls_used_in_selection": false,
+  "official_test_used_in_selection": false,
+  "latency_used_in_selection": false
+}

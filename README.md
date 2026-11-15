@@ -1,39 +1,35 @@
-# Visibility and consistency gated person re-identification
+# Inference-time token pruning for frozen CLIP-ReID
 
-Nazmul Nazim
+Nazmul Hasan Nazim
 
-One photo of a person is taken by one camera. The task is to rank photos from the other cameras so the same person comes first.
+This repository measures person re-identification with a frozen CLIP-ReID ViT-B/16 encoder on Market-1501. The current study asks how inference-time patch selection, pruning depth, and the number of retained tokens change retrieval accuracy and measured inference cost.
 
-Market-1501 is the dataset, published by Zheng et al. in 2015. CLIP-ReID is the search model, trained on that dataset by Li, Sun, and Li in 2023. This project loads their ViT-B/16 checkpoint and does not train it again. On the standard test, 3,368 query photos against 15,913 gallery photos, that model scored 89.41% mAP and 94.98% Rank-1. The paper reports 89.6% and 95.5%. k-reciprocal re-ranking on the same features scored 94.48% mAP and 95.37% Rank-1. The result file is `results/market1501_test_20261115T122953Z.json`.
+A 256×128 crop is 128 patches plus one class token. Selection, when enabled, runs after a complete transformer block. The class token is kept, the chosen patches are gathered into a shorter sequence in their original spatial order, and the remaining blocks run on that sequence. Positional embeddings are added once, before the transformer. There is no token fusion and no extra trained scorer.
 
-Before that search, the vision transformer can drop patch tokens. A 256 by 128 crop is 128 patches plus one class token. After layer 6 the class token keeps the patches it attends to most, and layers 7 to 12 run on the shorter sequence. `scripts/07_token_pruning.py` keeps half of the patches for one query. That run is not a Market-1501 score.
+Two selectors are compared at the same block and the same retained-patch count. Class-attention selection ranks patches by the class token's attention, averaged across heads after the softmax. Random selection draws a uniform subset without replacement. The random subset of an image is determined by the experiment seed and a hash of that image's preprocessed pixels, so it does not depend on batch size or processing order. The seeds used for that control are 11, 23, 37, 53, and 71.
 
-Qwen2.5-VL-3B is the judge. For each query it looks at the top 5 gallery photos. It compares upper clothing, lower clothing, footwear, a carried object, and a distinctive mark, then sees the same pair with the photos swapped. The gate keeps the answer only when both orders agree and at least two of those cues stay visible. Otherwise the CLIP-ReID order stays. The full judge run has not been done. `scripts/06_qwen_one_query.py` judges one query so the gate can be seen. That run is not a Market-1501 score.
+The encoder is the public CLIP-ReID Market-1501 checkpoint. Parameters stay frozen, BatchNorm uses its stored statistics, and the descriptor is the 1,280-dimensional L2-normalised concatenation of the batch-normalised class token and its batch-normalised projection. The primary score is cosine retrieval. k-reciprocal re-ranking is a separate comparison and is only interpreted against the same re-ranking on the other method.
 
-## Mac
+The previously reported full-test numbers, measured with the earlier pruning path, are stored in `results/market1501_test_20261115T182047Z.json` and `results/market1501_test_20261115T183006Z.json`. They are historical measurements. This iteration does not overwrite them. The experiment plan for the new grid is `configs/iteration2_plan.json`.
+
+## Commands
 
 ```bash
 python3.12 -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/python scripts/01_download_dataset.py
-.venv/bin/python scripts/02_download_model.py
-.venv/bin/python scripts/03_check.py
-.venv/bin/python scripts/04_download_qwen.py
-.venv/bin/python scripts/05_visual_rank.py
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_iteration2
+.venv/bin/python -m reidvlm prune-plan
+.venv/bin/python -m reidvlm prune-manifest --config configs/market1501.yaml
+.venv/bin/python -m reidvlm prune-benchmark --config configs/market1501.yaml --batch-size 1 --warmup 10 --iterations 50 --trials 3
+.venv/bin/python -m reidvlm prune-embed --config configs/market1501.yaml --split validation --strategy cls_attention --prune-block 6 --keep 64 --backend reference
 ```
 
-`./scripts/run_mac.sh` runs those five steps. Step 5 ranks every query with CLIP-ReID and does not call Qwen. The dataset Drive id is `0B8-rUzbwVRk0c054eEozWG9COHM`. The checkpoint Drive id is `1GnyAVeNOg3Yug1KBBWMKKbT2x43O5Ch7`. Qwen is saved under `caches/huggingface`.
+`prune-embed --limit N` is a smoke test. It must not be used to choose the configuration that is later scored on the official test. The official test has already been inspected, so it is not an untouched holdout.
 
-## Colab
+## Historical material
 
-Use a GPU runtime. Open `notebooks/colab_first_iteration.ipynb` and run the cells from the top. The first cell clones this repository, or pulls if the clone is already there. The next cells download Market-1501 and the CLIP-ReID checkpoint onto the Colab disk, then rank every query. The following cell drops half the patch tokens for one query, and the cell after that ranks every query with that pruning. Neither of those is a Qwen run. A later cell asks Qwen to judge one query. The final cell is the full Qwen run and stays skipped unless `RUN_FULL_QWEN` is set to True. The Colab disk is wiped when the session ends, so the next session downloads the two files again.
-
-## Files
-
-`src/reidvlm/` has the data loader, the evaluator, the CLIP-ReID model, the gate, and the Qwen client. `configs/market1501.yaml` holds the Market-1501 settings. `requirements.txt` is for the Mac. `requirements-colab.txt` is for Linux. The dataset, the checkpoint, the Qwen cache, and `.venv` are not committed.
+`notebooks/colab_first_iteration.ipynb` records the first measurement, including a Qwen2.5-VL judgment experiment that was not finished and is not part of the current study. `paper/main.pdf` reports that first pruning measurement. `notebooks/colab_iteration2.ipynb` is the notebook for this iteration. It checks out an explicit git revision and runs one configuration at a time.
 
 ## Sources
 
-CLIP-ReID inference follows Syliz517/CLIP-ReID at commit `eb1898b72c882875f478bebfc6d41644eece0a5d`. That repository has no license file. The ViT block follows OpenAI CLIP, which is MIT licensed. The re-identification changes are noted in `src/reidvlm/encoders/clip_reid.py`. k-reciprocal follows Zhong et al., CVPR 2017, through the CLIP-ReID Python code.
-
-Qwen weights are `Qwen/Qwen2.5-VL-3B-Instruct`, revision `66285546d2b821cf421d4f5eb2576359d3770cd3`, under the Qwen research license. The prompt and the gate are in this project.
+CLIP-ReID inference follows Syliz517/CLIP-ReID at commit `eb1898b72c882875f478bebfc6d41644eece0a5d`. That repository has no license file. The ViT block follows OpenAI CLIP, which is MIT licensed. Class-attention token selection follows EViT (Liang et al., ICLR 2022, arXiv:2202.07800). This code does not train the pruner, does not fuse discarded tokens, and does not claim to reproduce EViT. Attention weights follow `torch.nn.MultiheadAttention`. k-reciprocal follows Zhong et al., CVPR 2017. Market-1501 follows Zheng et al., ICCV 2015.

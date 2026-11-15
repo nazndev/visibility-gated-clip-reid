@@ -1,0 +1,27 @@
+{
+  "seed": 553,
+  "encoder_saw_these_identities": true,
+  "not_an_unseen_identity_split": true,
+  "source": "bounding_box_train",
+  "eligible_identities": 751,
+  "query_images": 751,
+  "gallery_images": 12185,
+  "train_images_used": 12936,
+  "query_cameras": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "gallery_cameras": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "valid_queries_with_cross_camera_positive": 751
+}

@@ -1,0 +1,106 @@
+{
+  "iteration": 2,
+  "question": "How do inference-time patch selection, pruning depth, and retained-token count affect retrieval accuracy and measured inference cost for a frozen CLIP-ReID encoder?",
+  "historical_anchor": {
+    "label": "previously reported full Market-1501 results; not a claim that new code reproduces them on another machine",
+    "full_cosine_mAP": 89.41,
+    "full_cosine_rank1": 94.98,
+    "full_kreciprocal_mAP": 94.48,
+    "full_kreciprocal_rank1": 95.37,
+    "attention_block6_keep64_cosine_mAP": 74.86,
+    "attention_block6_keep64_cosine_rank1": 88.93,
+    "attention_block6_keep64_kreciprocal_mAP": 88.4,
+    "attention_block6_keep64_kreciprocal_rank1": 90.62,
+    "files": [
+      "results/market1501_test_20261115T182047Z.json",
+      "results/market1501_test_20261115T183006Z.json"
+    ]
+  },
+  "configurations": [
+    {
+      "strategy": "none",
+      "prune_block": null,
+      "keep_patch_count": 128,
+      "role": "reference"
+    },
+    {
+      "strategy": "cls_attention",
+      "prune_block": 6,
+      "keep_patch_count": 96,
+      "role": "grid"
+    },
+    {
+      "strategy": "cls_attention",
+      "prune_block": 6,
+      "keep_patch_count": 64,
+      "role": "grid"
+    },
+    {
+      "strategy": "cls_attention",
+      "prune_block": 9,
+      "keep_patch_count": 96,
+      "role": "grid"
+    },
+    {
+      "strategy": "cls_attention",
+      "prune_block": 9,
+      "keep_patch_count": 64,
+      "role": "grid"
+    }
+  ],
+  "random_seeds": [
+    11,
+    23,
+    37,
+    53,
+    71
+  ],
+  "attention_backends": [
+    "reference",
+    "cls_row"
+  ],
+  "default_attention_backend": "reference",
+  "validation": {
+    "source": "Market-1501 bounding_box_train only",
+    "seed": 553,
+    "rule": "one query image per identity that has at least two cameras; remaining training images are the gallery",
+    "encoder_saw_these_identities": true,
+    "not_an_unseen_identity_split": true
+  },
+  "selection_rule": {
+    "candidates": "the four cls_attention grid cells, not the random controls",
+    "order": "highest raw validation mAP, then Rank-1, then lower measured median encoder latency",
+    "tie_mAP": 1e-06,
+    "tie_rank1": 1e-06,
+    "tie_latency_ms": 0.05,
+    "ceiling_fallback": "if every candidate has validation mAP at the ceiling, use block 9 and 96 patches and label the choice predefined",
+    "official_test_not_used": true
+  },
+  "timing": {
+    "batch_sizes": [
+      1,
+      32
+    ],
+    "warmup": 10,
+    "iterations": 50,
+    "trials": 3,
+    "precision": "float32",
+    "scopes": [
+      "encoder_inference",
+      "load_preprocess_encode_search"
+    ]
+  },
+  "comparisons": [
+    "cls_attention versus each matched random seed",
+    "cls_attention versus the mean of the five random seeds",
+    "every compressed setting versus the full encoder",
+    "raw cosine is primary; k-reciprocal is secondary and compared only with k-reciprocal"
+  ],
+  "official_test_priority": [
+    "full encoder",
+    "block 6, 64 patches, cls_attention",
+    "block 6, 64 patches, five random seeds",
+    "the additional attention configuration chosen on validation, unless it is the same cell",
+    "that configuration's five random seeds"
+  ]
+}

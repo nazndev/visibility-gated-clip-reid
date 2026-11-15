@@ -24,6 +24,15 @@ from PIL import Image
 from torch import nn
 
 from reidvlm.data.images import load_rgb
+from reidvlm.pruning.selection import (
+    SelectionConfig,
+    cls_patch_scores,
+    content_id_from_tensor,
+    gather_kept,
+    random_patch_indices,
+    reference_patch_scores,
+    select_from_scores,
+)
 from reidvlm.retrieval.cosine import l2_normalize
 from reidvlm.runtime import pick_device, sha256_file
 
@@ -56,21 +65,43 @@ class ResidualAttentionBlock(nn.Module):
         )
         self.ln_2 = LayerNorm(width)
 
-    def forward(self, x: torch.Tensor, return_attn: bool = False):
-        if return_attn:
-            attn_out, attn = self.attn(
-                self.ln_1(x),
-                self.ln_1(x),
-                self.ln_1(x),
-                need_weights=True,
-                average_attn_weights=True,
-            )
-            x = x + attn_out
-            x = x + self.mlp(self.ln_2(x))
-            return x, attn
-        x = x + self.attn(self.ln_1(x), self.ln_1(x), self.ln_1(x), need_weights=False)[0]
+    def forward(self, x: torch.Tensor, return_attn: bool = False, attention_backend: str = "reference"):
+        # One LayerNorm for Q, K, and V. The three calls used to repeat the same input.
+        normed = self.ln_1(x)
+        scores = None
+        if return_attn and attention_backend == "cls_row":
+            scores = cls_patch_scores(self.attn, normed)
+            attn_out = self.attn(normed, normed, normed, need_weights=False)[0]
+        elif return_attn:
+            attn_out, weights = self.attn(normed, normed, normed, need_weights=True, average_attn_weights=True)
+            scores = reference_patch_scores(weights)
+        else:
+            attn_out = self.attn(normed, normed, normed, need_weights=False)[0]
+        x = x + attn_out
         x = x + self.mlp(self.ln_2(x))
+        if return_attn:
+            return x, scores
         return x
+
+    def forward_selected(self, x: torch.Tensor, attention_backend: str):
+        """Block output uses need_weights=False. Scores are computed on the same normalised input.
+
+        The reference backend still runs the need_weights=True attention call. That call
+        supplies the class-token scores and is part of the measured selection cost.
+        Its attention output is not mixed into the residual.
+        """
+        normed = self.ln_1(x)
+        if attention_backend == "cls_row":
+            scores = cls_patch_scores(self.attn, normed)
+        elif attention_backend == "reference":
+            weights = self.attn(normed, normed, normed, need_weights=True, average_attn_weights=True)[1]
+            scores = reference_patch_scores(weights)
+        else:
+            raise ValueError(f"Unknown attention backend: {attention_backend}")
+        attn_out = self.attn(normed, normed, normed, need_weights=False)[0]
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, scores
 
 
 def prune_patch_tokens(tokens: torch.Tensor, attn: torch.Tensor, keep_ratio: float) -> tuple[torch.Tensor, torch.Tensor]:
@@ -110,40 +141,97 @@ class VisionTransformer(nn.Module):
         self.last_kept_patch_index = None
         self.last_tokens_in = grid_h * grid_w + 1
         self.last_tokens_out = grid_h * grid_w + 1
+        self.last_tokens_per_block: list[int] = []
 
-    def forward(self, x: torch.Tensor, camera_embed: torch.Tensor | None = None, keep_ratio: float = 1.0, prune_layer: int = 6):
+    def _run_blocks(self, x: torch.Tensor, selection: SelectionConfig | None, content_ids: list[str] | None):
+        """Run 12 blocks. selection None or strategy none uses the historical full or ratio path."""
+        patches = x.shape[0] - 1
+        self.last_tokens_in = int(x.shape[0])
+        self.last_tokens_per_block = []
+        if selection is None or selection.strategy == "none":
+            return self._historical_blocks(x)
+        selection.validate()
+        if selection.patch_count != patches:
+            raise ValueError(f"Selection expects {selection.patch_count} patches, the image has {patches}.")
+        kept_index = None
+        x11 = None
+        for layer, block in enumerate(self.transformer.resblocks, start=1):
+            self.last_tokens_per_block.append(int(x.shape[0]))
+            if layer == selection.prune_block:
+                if selection.strategy == "random":
+                    if content_ids is None or len(content_ids) != x.shape[1]:
+                        raise ValueError("Random selection needs one content id per image.")
+                    rows = [
+                        random_patch_indices(int(selection.seed), content_id, patches, selection.keep_patch_count)
+                        for content_id in content_ids
+                    ]
+                    kept_index = torch.tensor(rows, dtype=torch.long, device=x.device)
+                    x = block(x)
+                else:
+                    x, scores = block.forward_selected(x, selection.attention_backend)
+                    kept_index = select_from_scores(scores, selection.keep_patch_count).to(device=x.device)
+                x = gather_kept(x, kept_index)
+            else:
+                x = block(x)
+            if layer == 11:
+                x11 = x
+        self.last_kept_patch_index = kept_index
+        self.last_tokens_out = int(x.shape[0])
+        return x11, x
+
+    def _historical_blocks(self, x: torch.Tensor):
+        patches = x.shape[0] - 1
+        keep_ratio = float(getattr(self, "_keep_ratio", 1.0))
+        prune_layer = int(getattr(self, "_prune_layer", 6))
+        if keep_ratio >= 1.0:
+            self.last_tokens_per_block = [int(x.shape[0])] * 12
+            self.last_kept_patch_index = torch.arange(patches, device=x.device).expand(x.shape[1], patches)
+            self.last_tokens_out = int(x.shape[0])
+            x11 = self.transformer.resblocks[:11](x)
+            return x11, self.transformer.resblocks[11](x11)
+        if not 0 < keep_ratio < 1:
+            raise ValueError(f"keep_ratio must be in (0, 1], got {keep_ratio}.")
+        if not 1 <= prune_layer <= 11:
+            raise ValueError("prune_layer must be from 1 to 11 so the remaining layers run on the shorter sequence.")
+        keep = max(1, int(round(patches * keep_ratio)))
+        x11 = None
+        for layer, block in enumerate(self.transformer.resblocks, start=1):
+            self.last_tokens_per_block.append(int(x.shape[0]))
+            if layer == prune_layer:
+                # Historical rule: torch.topk, not the stable-argsort rule used by iteration 2.
+                x, scores = block(x, return_attn=True, attention_backend="reference")
+                chosen = torch.sort(scores.topk(keep, dim=1).indices, dim=1).values
+                self.last_kept_patch_index = chosen
+                x = gather_kept(x, chosen)
+            else:
+                x = block(x)
+            if layer == 11:
+                x11 = x
+        self.last_tokens_out = int(x.shape[0])
+        return x11, x
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        camera_embed: torch.Tensor | None = None,
+        keep_ratio: float = 1.0,
+        prune_layer: int = 6,
+        selection: SelectionConfig | None = None,
+        content_ids: list[str] | None = None,
+    ):
         x = self.conv1(x)
         x = x.reshape(x.shape[0], x.shape[1], -1).permute(0, 2, 1)
         cls = self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device)
         x = torch.cat([cls, x], dim=1)
         if camera_embed is not None:
             x[:, 0] = x[:, 0] + camera_embed
+        # Position is added once, before any block.
         x = x + self.positional_embedding.to(x.dtype)
         x = self.ln_pre(x).permute(1, 0, 2)
-        patches = x.shape[0] - 1
-        self.last_tokens_in = int(x.shape[0])
-        if keep_ratio >= 1.0:
-            self.last_kept_patch_index = torch.arange(patches, device=x.device).expand(x.shape[1], patches)
-            self.last_tokens_out = int(x.shape[0])
-            x11 = self.transformer.resblocks[:11](x)
-            x12 = self.transformer.resblocks[11](x11)
-            x12 = self.ln_post(x12.permute(1, 0, 2))
-            return x11.permute(1, 0, 2), x12, x12 @ self.proj
-        if not 0 < keep_ratio < 1:
-            raise ValueError(f"keep_ratio must be in (0, 1], got {keep_ratio}.")
-        if not 1 <= prune_layer <= 11:
-            raise ValueError("prune_layer must be from 1 to 11 so the remaining layers run on the shorter sequence.")
-        x11 = None
-        for layer, block in enumerate(self.transformer.resblocks, start=1):
-            if layer == prune_layer:
-                x, attn = block(x, return_attn=True)
-                x, self.last_kept_patch_index = prune_patch_tokens(x, attn, keep_ratio)
-            else:
-                x = block(x)
-            if layer == 11:
-                x11 = x
-        self.last_tokens_out = int(x.shape[0])
-        x12 = self.ln_post(x.permute(1, 0, 2))
+        self._keep_ratio = keep_ratio
+        self._prune_layer = prune_layer
+        x11, x12 = self._run_blocks(x, selection, content_ids)
+        x12 = self.ln_post(x12.permute(1, 0, 2))
         return x11.permute(1, 0, 2), x12, x12 @ self.proj
 
 
@@ -161,15 +249,23 @@ class CLIPReIDViT(nn.Module):
             self.cv_embed = nn.Parameter(torch.zeros(camera_count, 768))
         self.keep_ratio = 1.0
         self.prune_layer = 6
+        self.selection: SelectionConfig | None = None
 
-    def forward(self, images: torch.Tensor, camera_ids: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(self, images: torch.Tensor, camera_ids: torch.Tensor | None = None, content_ids: list[str] | None = None) -> torch.Tensor:
         camera_embed = None
         if self.sie_camera:
             if camera_ids is None:
                 camera_embed = torch.zeros(images.shape[0], 768, device=images.device, dtype=images.dtype)
             else:
                 camera_embed = self.sie_coefficient * self.cv_embed[camera_ids]
-        _, tokens, projected = self.image_encoder(images, camera_embed, self.keep_ratio, self.prune_layer)
+        _, tokens, projected = self.image_encoder(
+            images,
+            camera_embed,
+            self.keep_ratio,
+            self.prune_layer,
+            self.selection,
+            content_ids,
+        )
         feat = self.bottleneck(tokens[:, 0].float())
         feat_proj = self.bottleneck_proj(projected[:, 0].float())
         return torch.cat([feat, feat_proj], dim=1)
@@ -301,24 +397,34 @@ class CLIPReIDEncoder:
             raise ValueError("prune_layer must be from 1 to 11.")
         self.model.keep_ratio = float(keep_ratio)
         self.model.prune_layer = int(prune_layer)
+        self.model.selection = None
         if getattr(self, "info", None) is not None:
             patches = self.info.patch_tokens
             kept = patches if keep_ratio >= 1.0 else max(1, int(round(patches * keep_ratio)))
             self.info = replace(self.info, keep_ratio=float(keep_ratio), prune_layer=int(prune_layer), kept_patch_tokens=kept)
 
+    def set_selection(self, selection: SelectionConfig | None) -> None:
+        if selection is not None:
+            selection.validate()
+            if selection.patch_count != self.model.image_encoder.grid_h * self.model.image_encoder.grid_w:
+                raise ValueError("keep count does not match the loaded patch grid.")
+        self.model.selection = selection
+
     @torch.inference_mode()
-    def embed_images(self, images: list[Image.Image], camera_ids: list[int] | None = None, batch_size: int = 32) -> np.ndarray:
+    def embed_images(self, images: list[Image.Image], camera_ids: list[int] | None = None, batch_size: int = 32, content_ids: list[str] | None = None) -> np.ndarray:
         features = []
         cameras = camera_ids or [None] * len(images)
+        supplied = content_ids
         for start in range(0, len(images), batch_size):
             batch = images[start : start + batch_size]
             tensor = torch.stack([preprocess(image, self.image_height, self.image_width, self.pixel_mean, self.pixel_std) for image in batch])
+            ids = supplied[start : start + batch_size] if supplied is not None else [content_id_from_tensor(row) for row in tensor]
             tensor = tensor.to(self.device)
             cam = cameras[start : start + batch_size]
             cam_tensor = None
             if self.model.sie_camera and all(item is not None for item in cam):
                 cam_tensor = torch.tensor(cam, dtype=torch.long, device=self.device)
-            features.append(self.model(tensor, cam_tensor).cpu().numpy())
+            features.append(self.model(tensor, cam_tensor, ids).cpu().numpy())
         stacked = np.concatenate(features, axis=0).astype(np.float32)
         return l2_normalize(stacked)
 

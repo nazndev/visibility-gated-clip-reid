@@ -9,6 +9,8 @@ import signal
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+
 from reidvlm.lvlm.cache import compatible_identity
 from reidvlm.runtime import sha256_bytes, sha256_file, sha256_json
 
@@ -100,7 +102,7 @@ class RunStore:
         dest.write_bytes(raw)
         self._sidecar(dest).write_text(sha256_bytes(raw) + "\n")
 
-    def publish_bytes(self, relative: str, data: bytes) -> dict:
+    def publish_bytes(self, relative: str, data: bytes, replace: bool = False) -> dict:
         dest = self.run_dir / relative
         dest.parent.mkdir(parents=True, exist_ok=True)
         digest = sha256_bytes(data)
@@ -112,7 +114,11 @@ class RunStore:
                 self._note_verified(relative, digest, True)
                 return {"relative": relative, "sha256": digest, "reused": True}
             if actual == recorded and actual != digest:
-                raise RuntimeError(f"refusing to replace a verified artifact: {relative}")
+                if not replace:
+                    raise RuntimeError(f"refusing to replace a verified artifact: {relative}")
+                self._quarantine(dest)
+                if sidecar.exists():
+                    self._quarantine(sidecar)
             self._quarantine(dest)
             if sidecar.exists():
                 self._quarantine(sidecar)
@@ -137,9 +143,9 @@ class RunStore:
         self._note_verified(relative, digest, False)
         return {"relative": relative, "sha256": digest, "reused": False}
 
-    def publish_json(self, relative: str, payload: dict) -> dict:
+    def publish_json(self, relative: str, payload: dict, replace: bool = False) -> dict:
         data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-        return self.publish_bytes(relative, data)
+        return self.publish_bytes(relative, data, replace=replace)
 
     def read_verified_json(self, relative: str) -> dict | None:
         if not self.is_verified(relative):
@@ -287,6 +293,47 @@ class RunStore:
             "lock_alive": bool(lock_pid and _pid_alive(lock_pid)),
             "free_bytes": shutil.disk_usage(self.run_dir).free if self.run_dir.is_dir() else None,
         }
+
+
+    def feature_key(self, identity: dict) -> str:
+        return sha256_json(identity)[:20]
+
+    def load_feature_table(self, identity: dict) -> dict[str, np.ndarray] | None:
+        """Return id -> vector if the sidecar matches. A mismatched identity is refused."""
+        key = self.feature_key(identity)
+        relative = f"features/{key}.npz"
+        dest = self.run_dir / relative
+        if not self.is_verified(relative):
+            if dest.exists():
+                self._quarantine(dest)
+            return None
+        meta_rel = f"features/{key}.json"
+        if not self.is_verified(meta_rel):
+            return None
+        meta = json.loads((self.run_dir / meta_rel).read_text())
+        if meta.get("identity") != identity:
+            raise ValueError("Feature cache identity does not match the requested run.")
+        payload = np.load(dest)
+        ids = [str(item) for item in payload["ids"].tolist()]
+        rows = np.asarray(payload["rows"], dtype=np.float32)
+        if len(ids) != len(rows):
+            raise ValueError("Feature cache row count does not match its identifiers.")
+        return {item: row for item, row in zip(ids, rows)}
+
+    def save_feature_table(self, identity: dict, table: dict[str, np.ndarray]) -> dict:
+        key = self.feature_key(identity)
+        ids = sorted(table)
+        rows = np.stack([np.asarray(table[item], dtype=np.float32) for item in ids])
+        incoming = self.run_dir / ".incoming"
+        incoming.mkdir(parents=True, exist_ok=True)
+        array_tmp = incoming / f"{key}.npz"
+        np.savez(array_tmp, ids=np.array(ids), rows=rows)
+        array_bytes = array_tmp.read_bytes()
+        array_tmp.unlink()
+        meta = {"identity": identity, "count": len(ids)}
+        published = self.publish_bytes(f"features/{key}.npz", array_bytes, replace=True)
+        self.publish_json(f"features/{key}.json", meta, replace=True)
+        return published
 
 
 def demo_worker(run_dir: str, total: int, die_after: int | None = None) -> None:

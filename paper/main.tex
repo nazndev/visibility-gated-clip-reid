@@ -171,8 +171,9 @@ Keeping half of the patches costs 14.55 points of mAP and 6.05 points of Rank-1.
 Rank-10 falls only from 98.99 to 97.57.
 The first true match is often still near the front, while the order of the rest of the true matches is worse, which is why mAP moves more than Rank-1.
 k-reciprocal recovers 13.54 points of the pruned mAP, from 74.86 to 88.40, and still finishes 1.01 points below the unpruned encoder and 6.08 points below k-reciprocal on the full tokens.
-A true match remains inside the top five for 90.88\% of queries, down from 93.76\%.
-The share of all true gallery matches that sit in those five positions falls from 16.88\% to 15.90\%.
+A separate raw top-five check, computed before same-person same-camera removal, finds a true cross-camera match in that prefix for 90.88\% of queries, down from 93.76\%.
+That figure is not CMC Rank-5, which is 95.84 after the protocol filter.
+The share of all true gallery matches that sit in those five raw positions falls from 16.88\% to 15.90\%.
 Pruning therefore does not only reshuffle a short list.
 It changes the features of every query and every gallery image before any list is built.
 
