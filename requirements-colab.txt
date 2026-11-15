@@ -7,6 +7,9 @@
 # The notebook stops if torch.cuda.is_available() is false after installation.
 torch==2.15.0
 torchvision==0.29.2
+# Transformers imports TorchAudio while loading Qwen. Colab's preinstalled
+# build is CUDA 13.0, which refuses to start next to the CUDA 13.2 torch wheel.
+torchaudio==2.11.1
 transformers==5.22.2
 accelerate==1.15.0
 numpy==2.5.4

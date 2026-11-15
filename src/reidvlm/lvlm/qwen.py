@@ -97,7 +97,7 @@ class QwenVLBackend:
         try:
             from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
         except ImportError as exc:
-            raise LVLMUnavailable("The installed transformers package does not export Qwen2.5-VL.") from exc
+            raise LVLMUnavailable(f"Could not import Qwen2.5-VL: {exc}") from exc
         dtype = _dtype(self.requested_dtype, self.device)
         self.actual_dtype = str(dtype).replace("torch.", "")
         try:
