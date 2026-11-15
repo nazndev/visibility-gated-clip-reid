@@ -158,6 +158,10 @@ def cmd_prepare_validation(args) -> int:
 
 def cmd_evaluate(args) -> int:
     cfg = load_experiment(args.config)
+    if args.keep_ratio is not None:
+        cfg.encoder.keep_ratio = args.keep_ratio
+    if args.prune_layer is not None:
+        cfg.encoder.prune_layer = args.prune_layer
     if args.frozen:
         cfg = apply_frozen(cfg)
     summary = run_evaluation(cfg, use_lvlm=not args.visual_only)
@@ -322,6 +326,8 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--config", required=True)
     evaluate.add_argument("--visual-only", action="store_true")
     evaluate.add_argument("--frozen", action="store_true")
+    evaluate.add_argument("--keep-ratio", type=float, default=None)
+    evaluate.add_argument("--prune-layer", type=int, default=None)
     sub.add_parser("tables")
     search = sub.add_parser("search")
     search.add_argument("--query", type=resolve_path, required=True)

@@ -27,6 +27,9 @@ class EncoderConfig(BaseModel):
     sie_camera: bool = False
     sie_coefficient: float = 1.0
     batch_size: int = 32
+    # 1.0 keeps every patch token. A smaller ratio drops patches after prune_layer.
+    keep_ratio: float = 1.0
+    prune_layer: int = 6
     # Official Market-1501 ViT-CLIP-ReID weights from the Syliz517 release.
     gdrive_id: str | None = "1GnyAVeNOg3Yug1KBBWMKKbT2x43O5Ch7"
     code_revision: str = "eb1898b72c882875f478bebfc6d41644eece0a5d"

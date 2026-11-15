@@ -15,7 +15,7 @@ rank-equivalent to the cosine similarity used here.
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -56,10 +56,38 @@ class ResidualAttentionBlock(nn.Module):
         )
         self.ln_2 = LayerNorm(width)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_attn: bool = False):
+        if return_attn:
+            attn_out, attn = self.attn(
+                self.ln_1(x),
+                self.ln_1(x),
+                self.ln_1(x),
+                need_weights=True,
+                average_attn_weights=True,
+            )
+            x = x + attn_out
+            x = x + self.mlp(self.ln_2(x))
+            return x, attn
         x = x + self.attn(self.ln_1(x), self.ln_1(x), self.ln_1(x), need_weights=False)[0]
         x = x + self.mlp(self.ln_2(x))
         return x
+
+
+def prune_patch_tokens(tokens: torch.Tensor, attn: torch.Tensor, keep_ratio: float) -> tuple[torch.Tensor, torch.Tensor]:
+    """Keep the class token and the patches it attends to most.
+
+    tokens is [sequence, batch, dim] and index 0 is the class token.
+    attn is [batch, sequence, sequence], already averaged over heads.
+    Kept patches stay in their original left-to-right, top-to-bottom order.
+    """
+    sequence, _batch, dim = tokens.shape
+    patches = sequence - 1
+    keep = max(1, int(round(patches * keep_ratio)))
+    scores = attn[:, 0, 1:]
+    chosen = torch.sort(scores.topk(keep, dim=1).indices, dim=1).values
+    gathered = torch.gather(tokens[1:].permute(1, 0, 2), 1, chosen.unsqueeze(-1).expand(-1, -1, dim))
+    kept = torch.cat([tokens[0].unsqueeze(1), gathered], dim=1).permute(1, 0, 2)
+    return kept, chosen
 
 
 class VisionTransformer(nn.Module):
@@ -67,6 +95,9 @@ class VisionTransformer(nn.Module):
         super().__init__()
         grid_h = (height - patch) // stride + 1
         grid_w = (width - patch) // stride + 1
+        self.grid_h = grid_h
+        self.grid_w = grid_w
+        self.patch = patch
         self.conv1 = nn.Conv2d(3, dim, kernel_size=patch, stride=stride, bias=False)
         scale = dim ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(dim))
@@ -76,8 +107,11 @@ class VisionTransformer(nn.Module):
         self.transformer.resblocks = nn.Sequential(*[ResidualAttentionBlock(dim, heads) for _ in range(layers)])
         self.ln_post = LayerNorm(dim)
         self.proj = nn.Parameter(scale * torch.randn(dim, output_dim))
+        self.last_kept_patch_index = None
+        self.last_tokens_in = grid_h * grid_w + 1
+        self.last_tokens_out = grid_h * grid_w + 1
 
-    def forward(self, x: torch.Tensor, camera_embed: torch.Tensor | None = None):
+    def forward(self, x: torch.Tensor, camera_embed: torch.Tensor | None = None, keep_ratio: float = 1.0, prune_layer: int = 6):
         x = self.conv1(x)
         x = x.reshape(x.shape[0], x.shape[1], -1).permute(0, 2, 1)
         cls = self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device)
@@ -86,9 +120,30 @@ class VisionTransformer(nn.Module):
             x[:, 0] = x[:, 0] + camera_embed
         x = x + self.positional_embedding.to(x.dtype)
         x = self.ln_pre(x).permute(1, 0, 2)
-        x11 = self.transformer.resblocks[:11](x)
-        x12 = self.transformer.resblocks[11](x11)
-        x12 = self.ln_post(x12.permute(1, 0, 2))
+        patches = x.shape[0] - 1
+        self.last_tokens_in = int(x.shape[0])
+        if keep_ratio >= 1.0:
+            self.last_kept_patch_index = torch.arange(patches, device=x.device).expand(x.shape[1], patches)
+            self.last_tokens_out = int(x.shape[0])
+            x11 = self.transformer.resblocks[:11](x)
+            x12 = self.transformer.resblocks[11](x11)
+            x12 = self.ln_post(x12.permute(1, 0, 2))
+            return x11.permute(1, 0, 2), x12, x12 @ self.proj
+        if not 0 < keep_ratio < 1:
+            raise ValueError(f"keep_ratio must be in (0, 1], got {keep_ratio}.")
+        if not 1 <= prune_layer <= 11:
+            raise ValueError("prune_layer must be from 1 to 11 so the remaining layers run on the shorter sequence.")
+        x11 = None
+        for layer, block in enumerate(self.transformer.resblocks, start=1):
+            if layer == prune_layer:
+                x, attn = block(x, return_attn=True)
+                x, self.last_kept_patch_index = prune_patch_tokens(x, attn, keep_ratio)
+            else:
+                x = block(x)
+            if layer == 11:
+                x11 = x
+        self.last_tokens_out = int(x.shape[0])
+        x12 = self.ln_post(x.permute(1, 0, 2))
         return x11.permute(1, 0, 2), x12, x12 @ self.proj
 
 
@@ -104,6 +159,8 @@ class CLIPReIDViT(nn.Module):
         self.sie_coefficient = sie_coefficient
         if sie_camera:
             self.cv_embed = nn.Parameter(torch.zeros(camera_count, 768))
+        self.keep_ratio = 1.0
+        self.prune_layer = 6
 
     def forward(self, images: torch.Tensor, camera_ids: torch.Tensor | None = None) -> torch.Tensor:
         camera_embed = None
@@ -112,7 +169,7 @@ class CLIPReIDViT(nn.Module):
                 camera_embed = torch.zeros(images.shape[0], 768, device=images.device, dtype=images.dtype)
             else:
                 camera_embed = self.sie_coefficient * self.cv_embed[camera_ids]
-        _, tokens, projected = self.image_encoder(images, camera_embed)
+        _, tokens, projected = self.image_encoder(images, camera_embed, self.keep_ratio, self.prune_layer)
         feat = self.bottleneck(tokens[:, 0].float())
         feat_proj = self.bottleneck_proj(projected[:, 0].float())
         return torch.cat([feat, feat_proj], dim=1)
@@ -184,6 +241,10 @@ class EncoderInfo:
     device: str
     dtype: str
     sie_camera: bool
+    keep_ratio: float = 1.0
+    prune_layer: int = 6
+    patch_tokens: int = 128
+    kept_patch_tokens: int = 128
 
 
 class CLIPReIDEncoder:
@@ -199,6 +260,8 @@ class CLIPReIDEncoder:
         sie_coefficient: float = 1.0,
         camera_count: int = 6,
         device: str | None = None,
+        keep_ratio: float = 1.0,
+        prune_layer: int = 6,
     ):
         if not checkpoint.is_file():
             raise FileNotFoundError(
@@ -213,8 +276,11 @@ class CLIPReIDEncoder:
         self.device = device or pick_device()
         self.model = CLIPReIDViT(image_height, image_width, stride, sie_camera, camera_count, sie_coefficient)
         report = load_checkpoint_weights(self.model, checkpoint)
+        self.set_token_pruning(keep_ratio, prune_layer)
         self.model.to(self.device)
         self.model.eval()
+        patches = report["positional_tokens"] - 1
+        kept = patches if keep_ratio >= 1.0 else max(1, int(round(patches * keep_ratio)))
         self.info = EncoderInfo(
             report["sha256"],
             report["positional_tokens"],
@@ -222,7 +288,23 @@ class CLIPReIDEncoder:
             self.device,
             "float32",
             sie_camera,
+            keep_ratio,
+            prune_layer,
+            patches,
+            kept,
         )
+
+    def set_token_pruning(self, keep_ratio: float, prune_layer: int = 6) -> None:
+        if not 0 < keep_ratio <= 1:
+            raise ValueError(f"keep_ratio must be in (0, 1], got {keep_ratio}.")
+        if keep_ratio < 1 and not 1 <= prune_layer <= 11:
+            raise ValueError("prune_layer must be from 1 to 11.")
+        self.model.keep_ratio = float(keep_ratio)
+        self.model.prune_layer = int(prune_layer)
+        if getattr(self, "info", None) is not None:
+            patches = self.info.patch_tokens
+            kept = patches if keep_ratio >= 1.0 else max(1, int(round(patches * keep_ratio)))
+            self.info = replace(self.info, keep_ratio=float(keep_ratio), prune_layer=int(prune_layer), kept_patch_tokens=kept)
 
     @torch.inference_mode()
     def embed_images(self, images: list[Image.Image], camera_ids: list[int] | None = None, batch_size: int = 32) -> np.ndarray:

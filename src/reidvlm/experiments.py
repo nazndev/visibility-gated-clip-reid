@@ -76,6 +76,8 @@ def _encoder(cfg: ExperimentConfig) -> CLIPReIDEncoder:
         enc.pixel_std,
         enc.sie_camera,
         enc.sie_coefficient,
+        keep_ratio=enc.keep_ratio,
+        prune_layer=enc.prune_layer,
     )
 
 
@@ -227,10 +229,19 @@ def run_evaluation(cfg: ExperimentConfig, use_lvlm: bool) -> dict:
     sha = encoder.info.checkpoint_sha256[:12]
     feature_dir = resolve_path(cfg.output_dir) / "features"
     feature_dir.mkdir(parents=True, exist_ok=True)
-    query_cache = feature_dir / f"{cfg.dataset.name}_{cfg.split}_{sha}_{len(queries)}_{len(gallery)}_query.npy"
-    gallery_cache = feature_dir / f"{cfg.dataset.name}_{cfg.split}_{sha}_{len(gallery)}_gallery.npy"
+    prune_tag = ""
+    if cfg.encoder.keep_ratio < 1:
+        prune_tag = f"_pruneL{cfg.encoder.prune_layer}_r{cfg.encoder.keep_ratio:.2f}"
+    query_cache = feature_dir / f"{cfg.dataset.name}_{cfg.split}_{sha}{prune_tag}_{len(queries)}_{len(gallery)}_query.npy"
+    gallery_cache = feature_dir / f"{cfg.dataset.name}_{cfg.split}_{sha}{prune_tag}_{len(gallery)}_gallery.npy"
     started = time.perf_counter()
-    reused = list(feature_dir.glob(f"{cfg.dataset.name}_{cfg.split}_{sha}_*_{len(gallery)}_gallery.npy"))
+    reused = []
+    if not prune_tag:
+        reused = [
+            path
+            for path in feature_dir.glob(f"{cfg.dataset.name}_{cfg.split}_{sha}_*_{len(gallery)}_gallery.npy")
+            if "_prune" not in path.name
+        ]
     if gallery_cache.is_file():
         gallery_features = np.load(gallery_cache)
     elif reused:
@@ -319,6 +330,16 @@ def run_evaluation(cfg: ExperimentConfig, use_lvlm: bool) -> dict:
         "k": cfg.retrieval.k,
         "checkpoint_sha256": encoder.info.checkpoint_sha256,
         "positional_tokens": encoder.info.positional_tokens,
+        "token_pruning": {
+            "enabled": encoder.info.keep_ratio < 1,
+            "keep_ratio": encoder.info.keep_ratio,
+            "prune_layer": encoder.info.prune_layer,
+            "patch_tokens": encoder.info.patch_tokens,
+            "kept_patch_tokens": encoder.info.kept_patch_tokens,
+            "tokens_in": encoder.info.patch_tokens + 1,
+            "tokens_out": encoder.info.kept_patch_tokens + 1,
+            "class_token_kept": True,
+        },
         "omitted_training_only_keys": encoder.info.omitted_training_only_keys,
         "encoder_device": encoder.info.device,
         "encoder_dtype": encoder.info.dtype,

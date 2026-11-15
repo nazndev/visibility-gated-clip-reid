@@ -6,6 +6,8 @@ One photo of a person is taken by one camera. The task is to rank photos from th
 
 Market-1501 is the dataset, published by Zheng et al. in 2015. CLIP-ReID is the search model, trained on that dataset by Li, Sun, and Li in 2023. This project loads their ViT-B/16 checkpoint and does not train it again. On the standard test, 3,368 query photos against 15,913 gallery photos, that model scored 89.41% mAP and 94.98% Rank-1. The paper reports 89.6% and 95.5%. k-reciprocal re-ranking on the same features scored 94.48% mAP and 95.37% Rank-1. The result file is `results/market1501_test_20261115T122953Z.json`.
 
+Before that search, the vision transformer can drop patch tokens. A 256 by 128 crop is 128 patches plus one class token. After layer 6 the class token keeps the patches it attends to most, and layers 7 to 12 run on the shorter sequence. `scripts/07_token_pruning.py` keeps half of the patches for one query. That run is not a Market-1501 score.
+
 Qwen2.5-VL-3B is the judge. For each query it looks at the top 5 gallery photos. It compares upper clothing, lower clothing, footwear, a carried object, and a distinctive mark, then sees the same pair with the photos swapped. The gate keeps the answer only when both orders agree and at least two of those cues stay visible. Otherwise the CLIP-ReID order stays. The full judge run has not been done. `scripts/06_qwen_one_query.py` judges one query so the gate can be seen. That run is not a Market-1501 score.
 
 ## Mac
@@ -24,7 +26,7 @@ python3.12 -m venv .venv
 
 ## Colab
 
-Use a GPU runtime. Open `notebooks/colab_first_iteration.ipynb` and run the cells from the top. The first cell clones this repository. The later cells download Market-1501 and the CLIP-ReID checkpoint onto the Colab disk, then rank every query. The last cell asks Qwen to judge one query. That is not a Market-1501 score. The Colab disk is wiped when the session ends, so the next session downloads the two files again.
+Use a GPU runtime. Open `notebooks/colab_first_iteration.ipynb` and run the cells from the top. The first cell clones this repository, or pulls if the clone is already there. The next cells download Market-1501 and the CLIP-ReID checkpoint onto the Colab disk, then rank every query. The following cell drops half the patch tokens for one query, and the cell after that ranks every query with that pruning. Neither of those is a Qwen run. A later cell asks Qwen to judge one query. The final cell is the full Qwen run and stays skipped unless `RUN_FULL_QWEN` is set to True. The Colab disk is wiped when the session ends, so the next session downloads the two files again.
 
 ## Files
 
