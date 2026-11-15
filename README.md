@@ -24,7 +24,7 @@ python3.12 -m venv .venv
 
 ## Colab
 
-Use a GPU runtime. Upload the project zip to `/content/lvlm-person-reid.zip`, open `notebooks/colab_first_iteration.ipynb`, and run the cells from the top. The last cell is the same CLIP-ReID ranking.
+Use a GPU runtime. Open `notebooks/colab_first_iteration.ipynb` and run the cells from the top. The first cell clones this repository. The later cells download Market-1501 and the CLIP-ReID checkpoint onto the Colab disk, then rank every query. Qwen is not called. The Colab disk is wiped when the session ends, so the next session downloads the two files again.
 
 ## Files
 
