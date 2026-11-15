@@ -18,6 +18,7 @@ encoder:
   code_revision: eb1898b72c882875f478bebfc6d41644eece0a5d
 lvlm:
   model_id: Qwen/Qwen2.5-VL-3B-Instruct
+  revision: 66285546d2b821cf421d4f5eb2576359d3770cd3
   dtype: float16
   max_new_tokens: 384
   do_sample: false
