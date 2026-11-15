@@ -9,7 +9,7 @@
 \usepackage[hidelinks]{hyperref}
 \usepackage[numbers,sort]{natbib}
 
-\title{Visibility and Consistency Gated Person Re-Identification\\with a Frozen Vision-Language Model}
+\title{Inference-Time Token Pruning for Person Re-Identification\\with a Frozen CLIP-ReID Transformer}
 \author{Nazmul Hasan Nazim \\ Student ID 2527369 \\[0.5em]
 CSE553.1 Computer Vision \\ Course faculty: Dr.\ Nabeel Mohammed (NbM)}
 \date{}
@@ -19,14 +19,17 @@ CSE553.1 Computer Vision \\ Course faculty: Dr.\ Nabeel Mohammed (NbM)}
 
 \begin{abstract}
 Person re-identification ranks gallery photographs so that other views of the person in a query crop come first.
-This paper keeps that search model fixed and asks a narrower question: when a frozen vision-language model looks at the top of the list, which of its judgments are safe to use?
-The search model is the published CLIP-ReID ViT-B/16 checkpoint trained on Market-1501.
-On the standard single-query test it scores 89.41\% mAP and 94.98\% Rank-1, against the paper's 89.6\% and 95.5\%.
-The proposed gate shows each of the top five gallery crops to Qwen2.5-VL-3B twice, once in each image order.
-A judgment can change the score only when the two verdicts agree, the verdict is not uncertain, and at least two clothing cues remain visible with the same relation after the swap.
-Otherwise the original rank is left unchanged.
-The full comparison on all 3{,}368 queries is still running, so this draft does not claim that the gate improves re-identification.
-A single worked query is included only to show the gate accepting two judgments and rejecting three.
+This paper asks how much of that ranking survives when half of the patch tokens are removed from a frozen vision transformer.
+The encoder is the published CLIP-ReID ViT-B/16 checkpoint trained on Market-1501.
+It is not retrained.
+On the standard single-query test the full token sequence scores 89.41\% mAP and 94.98\% Rank-1, against the published 89.6\% and 95.5\%.
+Each $256 \times 128$ crop enters the network as 128 patch tokens plus one class token.
+After layer 6, the class token keeps the 64 patches it attends to most, and layers 7--12 run on 65 tokens instead of 129.
+On the same 3{,}368 queries the pruned encoder scores 74.86\% mAP and 88.93\% Rank-1.
+k-reciprocal re-ranking on the pruned features recovers the score to 88.40\% mAP, which is still below the unpruned list.
+The class token is never dropped.
+On an illustrated query the surviving patches cover the person and the discarded patches are mostly background.
+The result is the measured cost of that cut, not a claim that pruning improves re-identification.
 \end{abstract}
 
 \section{Introduction}
@@ -35,98 +38,65 @@ Its output is an ordering, not an identity in a closed set.
 Market-1501 made this protocol standard: 751 people for training, 750 disjoint people for testing, and a fixed rule for which gallery hits count \cite{zheng2015market}.
 CLIP-ReID later showed that a CLIP image encoder, adapted without requiring a text label at inference, is a strong ranker on that benchmark \cite{li2023clipreid,radford2021clip}.
 
-The remaining errors are not spread evenly through the list.
-On the checkpoint used here, the correct person is already inside the top five for 93.8\% of queries, but only 16.9\% of all true gallery matches sit in that shortlist.
-A second model that reorders the whole gallery is therefore solving a different problem from a second model that is allowed to touch only those five crops.
+The encoder is a vision transformer \cite{dosovitskiy2021vit}.
+A $256 \times 128$ crop is divided into 128 patches.
+Those patches, together with one class token, pass through all 12 layers, but the vector used for search is built only from the class token.
+The patch tokens are therefore computed in full and then discarded, except for the information they have already written into the class token through attention.
+Token pruning asks whether the later layers need every patch \cite{liang2022evit}.
 
-A large vision-language model can describe clothes and say whether two crops show the same person.
-That answer is not yet a retrieval score.
-The model can change its verdict when the two photographs are swapped, and it can comment on a garment that is occluded in one of them.
-Using every answer would mix a few useful corrections with a larger number of unstable ones.
-The method in this paper is a gate on those answers.
-It is not a new dataset, and it does not train either model.
+This paper makes one controlled cut inside a checkpoint that was not trained to be pruned.
+After layer 6, only the patches most attended by the class token continue.
+The same Market-1501 test is then repeated.
+The question is not whether a shorter sequence can beat the published model.
+The question is how person ranking changes when half of the patches are removed and nothing else is retrained.
 
 \section{Related work}
 Market-1501 collects six cameras in an outdoor campus scene and evaluates single-query search after removing junk detections and same-camera matches of the query identity \cite{zheng2015market}.
-The numbers reported below use that protocol and do not add the optional 500{,}000 distractors.
+The numbers below use that protocol and do not add the optional 500{,}000 distractors.
 
 CLIP-ReID starts from CLIP's image tower and learns re-identification prompts and an image encoder on the training split \cite{li2023clipreid}.
 The published ViT result without side-information embeddings and without online instance matching is 89.6\% mAP and 95.5\% Rank-1.
 This project loads that released ViT-B/16 checkpoint and does not repeat its training.
+Camera side-information embeddings are off, matching the published row used for comparison.
+
+A vision transformer mixes a class token with a grid of patch tokens \cite{dosovitskiy2021vit}.
+EViT showed that the class token's attention is a usable score for discarding patches, and that the later blocks can run on the reduced sequence \cite{liang2022evit}.
+That work trains and evaluates the idea on image classification.
+The experiment here copies the selection rule, applies it once at inference, and measures person re-identification instead of classification accuracy.
+No pruning weights are learned.
 
 k-reciprocal re-ranking is a feature-space method from 2017 \cite{zhong2017kreciprocal}.
-It is reported here as a reference, with the original neighborhood sizes $k_1{=}20$, $k_2{=}6$, and mixture weight $0.3$.
-It is not part of the proposed gate.
-The CLIP-ReID code uses a larger neighborhood; that variant is not silently substituted.
-
-Qwen2.5-VL-3B-Instruct is a general vision-language model \cite{qwen2025vl}.
-Here it is frozen.
-The prompt and the acceptance rule are local to this project.
-The model is not fine-tuned on Market-1501, and its text is not turned into a training label for the ranker.
+It is reported on both the full and the pruned features, with the original neighborhood sizes $k_1{=}20$, $k_2{=}6$, and mixture weight $0.3$.
+The CLIP-ReID code uses a larger neighborhood; that variant is not substituted.
+k-reciprocal does not see the image tokens.
+It tests whether a standard reranker can repair a list that was built from a shorter token sequence.
 
 \section{Method}
-\subsection{Visual ranking}
-Each crop is resized to $256 \times 128$ and encoded by the CLIP-ReID ViT-B/16, with patch stride 16 and camera side-information embeddings switched off.
-The representation used for search is the concatenation of the batch-normalized class token and the batch-normalized projection, an $\ell_2$-normalized vector of 1{,}280 dimensions.
-For a query vector $q$ and a gallery vector $g$, the visual score is the cosine
+\subsection{Unpruned ranking}
+Each crop is resized to $256 \times 128$ and encoded by the CLIP-ReID ViT-B/16, with patch size 16, stride 16, and camera side-information embeddings switched off.
+The patch grid is $16 \times 8$, so the sequence length is $128 + 1 = 129$.
+The search vector is the concatenation of the batch-normalized class token and the batch-normalized projection of that token, an $\ell_2$-normalized vector of 1{,}280 dimensions.
+For a query vector $q$ and a gallery vector $g$, the score is the cosine
 \begin{equation}
 v = q^{\top} g.
 \end{equation}
 Gallery entries whose filename marks them as junk are removed before ranking.
 A gallery photograph of the same person taken by the same camera as the query is ignored when mAP and Rank-$k$ are computed.
-It can still appear in a qualitative list.
 
-\subsection{Token pruning}
-The same ViT begins with 128 patch tokens and one class token.
-After layer 6, the class token's attention selects the patches that are kept.
-Layers 7--12 then run only on the class token and those patches.
-The class token is never removed, and the checkpoint is not retrained.
-At a keep ratio of one half, 64 of the 128 patches remain, so the sequence falls from 129 tokens to 65.
-The search vector is still the batch-normalized class token concatenated with its projection.
+\subsection{Where the tokens are cut}
+The first six transformer layers run on all 129 tokens.
+At layer 6 the attention weights are averaged over the 12 heads.
+The score of a patch is the attention from the class token to that patch.
+The 64 highest-scoring patches are kept and written back in their original left-to-right, top-to-bottom order.
+The class token is always kept, so layers 7--12 receive 65 tokens.
+Position vectors are not recomputed: each surviving token already carries the position that was added before layer 1.
+The search vector is read from the class token in the usual way.
+When the keep ratio is 1, the original 12-layer path is used unchanged, so the baseline is the unpruned checkpoint.
 
-A six-photo check on the Mac, query \texttt{0001\_c1s1\_001051\_00.jpg} against five gallery crops, kept the different identity last both with and without pruning.
-Two photographs of the same person exchanged the second and third places.
-That check is an illustration of the mechanism.
-It is not a Market-1501 mAP or Rank-1, and the full test at 50\%, 75\%, and 25\% kept patches has not been run.
-
-\subsection{Pair judgment}
-Let the shortlist of a query be the $K{=}5$ gallery crops with the largest $v$.
-Qwen receives the query crop and one shortlist crop, in that order, together with a fixed prompt.
-It must return a JSON object with an overall verdict in $\{\text{same}, \text{different}, \text{uncertain}\}$ and five cues: upper clothing, lower clothing, footwear, a carried object, and a distinctive mark.
-For each cue it records whether the cue is visible in each image and whether the visible relation is match, mismatch, or unknown.
-The same call is then made with the photographs swapped.
-Sampling is disabled, and a malformed reply is attempted once more.
-No verdict is read from a free-form paragraph.
-
-The two verdicts become numbers $d_{AB}, d_{BA} \in \{+1,-1,0\}$, and
-\begin{equation}
-d = (d_{AB} + d_{BA}) / 2.
-\end{equation}
-
-\subsection{Visibility and consistency gate}
-A cue is stable only when both images show it in both orders, its relation is match or mismatch, and that relation does not change after the swap.
-If $n$ of the five cues are stable,
-\begin{equation}
-r =
-\begin{cases}
-n/5 & \text{if both replies are valid, the verdicts agree,}\\
-    & \text{the shared verdict is not uncertain, and } n \ge \tau,\\
-0 & \text{otherwise.}
-\end{cases}
-\end{equation}
-The corrected score is
-\begin{equation}
-s = v + \alpha \, r \, d.
-\end{equation}
-With the settings used for the test run, $\alpha{=}0.05$ and $\tau{=}2$.
-When $r{=}0$, the added term is zero and the visual order is unchanged.
-The same rule with the visibility test removed, the agreement test removed, or both removed defines the comparison variants.
-The ungated comparison adds $\alpha d$ whenever both replies parse, including when the two orders disagree.
-Those variants exist so that a later table can separate the effect of the gate from the effect of simply trusting Qwen.
-
-The correction is a small change to a cosine.
-It can reorder the shortlist.
-It cannot retrieve a true match that CLIP-ReID placed at rank 6 or below.
+The cut is deliberately simple.
+There is one pruning layer and one keep ratio.
+The checkpoint is frozen.
+A learned pruner, a second pruning stage, or a search over layers would be a different experiment, and those settings are not reported here.
 
 \section{Experimental setup}
 Market-1501 is used under the standard single-query protocol.
@@ -137,100 +107,118 @@ The checkpoint hash is
 \begin{center}
 \small\texttt{bedc8fcc37f296045df19d901b162dd032bfa85d9b4f2406eff8313536d444dc}.
 \end{center}
-Qwen is revision \texttt{66285546d2b821cf421d4f5eb2576359d3770cd3}.
 
-The same visual evaluation was run on an Apple M4 with Metal and on a Colab T4 with CUDA.
-The Rank-1, Rank-5, and Rank-10 figures agreed exactly.
-mAP differed only in the ninth significant digit, which is consistent with running the same reduction on two devices.
-The tables use the Colab figures.
+Both rankings were run on a Colab T4.
+The unpruned ranking was also run on an Apple M4 with Metal.
+Rank-1, Rank-5, and Rank-10 agreed exactly between those two devices, and mAP differed only in the ninth significant digit.
+The tables use the T4 figures.
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+Unpruned & \texttt{market1501\_test\_20261115T182047Z.json} \\
+Pruned & \texttt{market1501\_test\_20261115T183006Z.json}
+\end{tabular}
+\end{center}
 
 Rank-1 is the fraction of queries whose first allowed gallery image has the query identity.
 mAP averages, over queries, the quality of the whole list of true matches.
 Both follow the usual Market-1501 definitions.
 
 \section{Results}
-\subsection{Reproducing the search model}
-Table~\ref{tab:visual} is the completed part of the study.
-The loaded checkpoint is within 0.2 points of mAP and 0.5 points of Rank-1 of the number published for this ViT configuration.
+\subsection{The unpruned checkpoint}
+Table~\ref{tab:visual} checks that the loaded weights are the published model before any token is removed.
+The checkpoint is within 0.2 points of mAP and 0.5 points of Rank-1 of the number published for this ViT configuration.
 That gap is small enough to treat the checkpoint as reproduced.
-k-reciprocal raises mAP by about five points and Rank-1 by a smaller amount.
-It uses gallery-gallery and query-query relations, so it is a different use of the same features, not evidence for the gate.
+k-reciprocal raises mAP by 5.07 points on these same features.
+It uses gallery-gallery and query-query relations, so it is a different use of the vectors, not a change to the transformer.
 
 \begin{table}[t]
 \centering
-\caption{Market-1501 single-query results for the frozen CLIP-ReID checkpoint. Qwen is not used. The published row is the ViT result without side-information embeddings reported by CLIP-ReID.}
+\caption{Market-1501 single-query results for the frozen CLIP-ReID checkpoint, with every patch token kept. The published row is the ViT result without side-information embeddings.}
 \label{tab:visual}
 \begin{tabular}{lcccc}
 \toprule
 Method & mAP & Rank-1 & Rank-5 & Rank-10 \\
 \midrule
 Published CLIP-ReID \cite{li2023clipreid} & 89.6 & 95.5 & -- & -- \\
-This checkpoint & 89.41 & 94.98 & 98.34 & 98.99 \\
+This checkpoint, 129 tokens & 89.41 & 94.98 & 98.34 & 98.99 \\
 k-reciprocal on the same features & 94.48 & 95.37 & 97.89 & 98.63 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Two further measurements bound what the gate can do.
-The top five contains at least one correct person for 93.76\% of queries.
-Only 16.88\% of all correct gallery images fall inside those five positions.
-Most of the missing mAP is therefore outside the gate's reach.
-A perfect reordering of every shortlist would still leave the majority of true matches where CLIP-ReID placed them.
+\subsection{Half of the patches removed}
+Table~\ref{tab:prune} repeats the test after the cut in Section 3.
+The gallery, the queries, the metric, and the checkpoint are unchanged.
 
-\subsection{What the gate did on one query}
-The full shortlist evaluation is not finished.
-One query, \texttt{0001\_c1s1\_001051\_00}, was judged against five gallery crops so the rule could be inspected.
-The same ten calls, five pairs in two orders, were run on the Mac and on the T4.
-Both runs kept 2 of the 5 judgments and did not change the order.
+\begin{table}[t]
+\centering
+\caption{The same Market-1501 test after keeping 64 of 128 patch tokens. Layers 7--12 see 65 tokens, including the class token.}
+\label{tab:prune}
+\begin{tabular}{lccccc}
+\toprule
+Method & Tokens & mAP & Rank-1 & Rank-5 & Rank-10 \\
+\midrule
+No pruning & 129 & 89.41 & 94.98 & 98.34 & 98.99 \\
+Keep 64 patches & 65 & 74.86 & 88.93 & 95.84 & 97.57 \\
+k-reciprocal, no pruning & 129 & 94.48 & 95.37 & 97.89 & 98.63 \\
+k-reciprocal, 64 patches & 65 & 88.40 & 90.62 & 95.13 & 96.26 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-The same-camera crop of person 0001 stayed first.
-Qwen said \emph{different} in one order and \emph{same} in the other, so the gate rejected it.
-Its cosine, 0.968, is the score of a near-duplicate frame.
-The official metric would have ignored this crop anyway.
-The camera-3 crop of the same person was accepted: both orders said \emph{same}, and the visible cues were a white top, a white skirt, and black shoes.
-The added term was too small to pass the near-duplicate.
-The camera-2 and camera-6 crops of the same person were rejected because the verdict flipped after the swap.
-Person 0004 was accepted as \emph{different} in both orders, and its score moved down.
-It was already last among the five.
+Keeping half of the patches costs 14.55 points of mAP and 6.05 points of Rank-1.
+Rank-10 falls only from 98.99 to 97.57.
+The first true match is often still near the front, while the order of the rest of the true matches is worse, which is why mAP moves more than Rank-1.
+k-reciprocal recovers 13.54 points of the pruned mAP, from 74.86 to 88.40, and still finishes 1.01 points below the unpruned encoder and 6.08 points below k-reciprocal on the full tokens.
+A true match remains inside the top five for 90.88\% of queries, down from 93.76\%.
+The share of all true gallery matches that sit in those five positions falls from 16.88\% to 15.90\%.
+Pruning therefore does not only reshuffle a short list.
+It changes the features of every query and every gallery image before any list is built.
 
-This example shows the gate doing the job it was written to do: blocking an answer that does not survive the swap.
-It is not a Market-1501 score, and it is not evidence that mAP rises.
+Figure~\ref{fig:prune} shows which patches survive for one query.
+Dark blocks were not passed to layers 7--12.
+The dress, hair, and legs remain, and much of the background is removed.
+On this query against five gallery crops, the different identity stayed last with and without pruning, while two photographs of the same person exchanged second and third place.
+That list is an illustration of the selected tokens.
+The Market-1501 numbers are Table~\ref{tab:prune}.
 
-\subsection{Full shortlist evaluation}
-The full Qwen pass was started and then stopped.
-It asks Qwen for both orders of the top five crops of every one of the 3{,}368 queries, which is 33{,}680 judgments before any retry.
-Each finished judgment is stored, and a restarted run skips pairs already stored.
-The stopped run is not a score.
-Until a complete run exists, the visual row in Table~\ref{tab:visual} is the result that can be reported.
-The table that should follow will list mAP and Rank-1 for the visual list, the ungated Qwen update, and the proposed gate, on the same predictions.
-If the gate does not beat the visual list, that is the finding.
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.42\linewidth]{figures/0001_c1s1_001051_00_keep50.png}
+\caption{Query 0001, camera 1, after keeping 64 of 128 patches. Dark blocks were dropped after layer 6. The class token is kept.}
+\label{fig:prune}
+\end{figure}
 
 \section{Discussion}
-The useful claim, if the full run supports it, is not that a 3B vision-language model is a better ranker than CLIP-ReID.
-The ranker is already strong, and the language model never sees most of the gallery.
-The claim is that agreement across image order, together with a minimum number of visible cues, is a workable test for whether to trust a shortlist edit.
+The experiment has one intervention and a matched pair of evaluations.
+The person, the cameras, the checkpoint, and the metric stay fixed.
+Only the token sequence changes.
+That is what makes the 14.55-point mAP gap interpretable: it is the cost of discarding the 64 patches the class token attended to least, inside a model that still expected to see them.
 
-Two limitations are already clear.
-First, $\alpha{=}0.05$ can move a cosine by at most $0.05$.
-A wrong photograph with a much larger visual score will stay in front, which is what happened with the near-duplicate in the worked example.
-Second, the preliminary validation split did not separate the candidate values of $\alpha$ and $\tau$; the visual ranking on that small split was already perfect.
-The test-set run therefore uses the stated settings rather than a value chosen because it won a validation contest.
-Changing those settings after seeing the test numbers would not be a fair test.
+Two observations keep the result from being only a lower number.
+First, Rank-10 stays high, so identity evidence is concentrated in the patches the class token already prefers.
+The figure agrees with that reading on one image: the kept blocks lie on the body.
+Second, k-reciprocal can repair a large part of the damage without looking at tokens at all.
+The pruned vectors are weaker, and they are not unstructured.
+Neighbor relations among them still carry identity.
 
-A third limitation is practical.
-At the rate observed while judgments were being stored, the full judgment pass takes on the order of a week of GPU time.
-The result is worth reporting when it exists.
-It is not something to replace with the one-query example.
+The limits are equally specific.
+The keep ratio is one half, and the cut is only after layer 6.
+A later layer would discard less computation and might discard less accuracy.
+An earlier layer would do the opposite.
+This paper does not report that sweep, so it does not claim that layer 6 or 64 patches is the best operating point.
+The checkpoint was not fine-tuned after the rule was inserted.
+A model trained with the same drop could close some of the gap, and that comparison is not available here.
+Finally, the selection rule is the class-attention rule from image classification \cite{liang2022evit}.
+The contribution is the measurement of that rule on person re-identification, under a frozen CLIP-ReID checkpoint and the official Market-1501 protocol.
 
 \section{Conclusion}
-A frozen CLIP-ReID checkpoint reproduces the published Market-1501 operating point closely enough to be the baseline: 89.41\% mAP and 94.98\% Rank-1.
-Token pruning sits inside that same ViT.
-After layer 6, the class token keeps the patches it attends to most, and the later layers run on the shorter sequence.
-At half of the patches, one query falls from 129 tokens to 65, and on a six-photo check the different identity stays last.
-That check is not a Market-1501 score.
-On top of the unpruned shortlist, a frozen Qwen2.5-VL-3B judge is admitted only when its verdict is the same in both image orders and at least two clothing cues stay visible and consistent.
-The full measurement of that rule was started and then stopped, so it is not a score.
-The completed evidence is the reproduced baseline, the shortlist coverage that limits any top-5 method, the token-pruning mechanism on one query, and one query on which the gate rejected the unstable answers.
+A frozen CLIP-ReID checkpoint reproduces the published Market-1501 operating point at 89.41\% mAP and 94.98\% Rank-1.
+Inside that transformer, the class token selects 64 of 128 patches after layer 6, and the remaining layers rank people from 65 tokens instead of 129.
+On all 3{,}368 queries the pruned ranking scores 74.86\% mAP and 88.93\% Rank-1.
+k-reciprocal raises the pruned result to 88.40\% mAP and does not recover the unpruned list.
+Half of the patches can be removed without losing the person in the token map, and the ranking pays 14.55 points of mAP for that removal.
 
 \bibliographystyle{plainnat}
 \bibliography{references}

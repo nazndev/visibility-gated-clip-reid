@@ -1,0 +1,125 @@
+{
+  "label": "full split evaluation",
+  "dataset": "market1501",
+  "split": "test",
+  "query_count": 3368,
+  "gallery_count": 15913,
+  "gallery_was_subset": false,
+  "seed": 553,
+  "alpha": 0.05,
+  "min_shared_cues": 2,
+  "k": 5,
+  "checkpoint_sha256": "bedc8fcc37f296045df19d901b162dd032bfa85d9b4f2406eff8313536d444dc",
+  "positional_tokens": 129,
+  "token_pruning": {
+    "enabled": false,
+    "keep_ratio": 1.0,
+    "prune_layer": 6,
+    "patch_tokens": 128,
+    "kept_patch_tokens": 128,
+    "tokens_in": 129,
+    "tokens_out": 129,
+    "class_token_kept": true
+  },
+  "omitted_training_only_keys": {
+    "classifier": 1,
+    "classifier_proj": 1,
+    "prompt_learner": 3,
+    "text_encoder": 148
+  },
+  "encoder_device": "cuda",
+  "encoder_dtype": "float32",
+  "embed_seconds": 175.5571721550001,
+  "methods": {
+    "visual": {
+      "mAP": 0.8941489338504723,
+      "rank1": 0.9498218527315915,
+      "rank5": 0.9833729216152018,
+      "rank10": 0.9899049881235155,
+      "valid_queries": 3368,
+      "excluded_queries": 0,
+      "shortlist_hit_rate": 0.9376484560570071,
+      "positive_coverage_at_k": 0.16880501117847288,
+      "k": 5
+    },
+    "kreciprocal": {
+      "mAP": 0.9448037772981412,
+      "rank1": 0.9536817102137767,
+      "rank5": 0.9789192399049881,
+      "rank10": 0.9863420427553444,
+      "valid_queries": 3368,
+      "excluded_queries": 0,
+      "shortlist_hit_rate": 0.9260688836104513,
+      "positive_coverage_at_k": 0.17323611754516707,
+      "k": 5,
+      "parameters": {
+        "k1": 20,
+        "k2": 6,
+        "lambda": 0.3,
+        "uses_query_query_and_gallery_gallery": true
+      }
+    }
+  },
+  "judgment": null,
+  "kreciprocal": "completed",
+  "data_report": {
+    "dataset": "Market-1501",
+    "protocol": "single-query, no 500K distractors",
+    "root_name": "Market-1501-v15.09.15",
+    "train_images": 12936,
+    "query_images": 3368,
+    "gallery_folder_images": 19732,
+    "junk_images": 3819,
+    "gallery_after_junk_removal": 15913,
+    "train_identities": 751,
+    "query_identities": 750,
+    "gallery_identities_excluding_distractor": 750,
+    "train_test_identity_overlap": [],
+    "expected": {
+      "train_images": 12936,
+      "query_images": 3368,
+      "gallery_folder_images": 19732,
+      "gallery_after_junk_removal": 15913
+    },
+    "count_mismatch": {
+      "train": false,
+      "query": false,
+      "gallery_folder": false,
+      "gallery_after_junk": false
+    }
+  },
+  "hardware": {
+    "python": "3.13.16",
+    "cpu": "x86_64",
+    "ram_bytes": 13605818368,
+    "disk_free_bytes": 112041283584,
+    "device": "cuda",
+    "mps_available": false,
+    "cuda_available": true,
+    "gpu": {
+      "name": "Tesla T4",
+      "vram_bytes": 15637086208,
+      "cuda": "13.2"
+    },
+    "torch": "2.15.0+cu132",
+    "numpy": "2.5.4"
+  },
+  "packages": {
+    "torch": "2.15.0",
+    "torchvision": "0.29.2",
+    "transformers": "5.22.2",
+    "accelerate": "1.15.0",
+    "numpy": "2.5.4",
+    "pillow": "13.0.0",
+    "pydantic": "2.14.3",
+    "pyyaml": "6.0.3",
+    "tqdm": "4.70.1",
+    "huggingface_hub": "2.4.0",
+    "gdown": "6.5.1"
+  },
+  "source_revision": "8d438b01ffc8a5f6bcda1c7d53785db9a8d292a5",
+  "prompt_version": "pair-judgment-v2",
+  "schema_version": "pair-judgment-v1",
+  "peak_rss_bytes": 8225525760,
+  "created": "2026-11-15T18:20:47.163836+00:00"
+}
