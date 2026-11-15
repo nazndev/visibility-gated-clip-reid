@@ -1,0 +1,18 @@
+# Linux dependencies for notebooks/colab_first_iteration.ipynb.
+# Do not add the CPU-only PyTorch index.
+#
+# The published PyPI wheel torch-2.15.0-cp312-cp312-manylinux_2_28_x86_64.whl
+# contains torch/version.py with __version__ == "2.15.0+cu132" and cuda == "13.2".
+# That identity was read from the wheel. It was not executed on a GPU here.
+# The notebook stops if torch.cuda.is_available() is false after installation.
+torch==2.15.0
+torchvision==0.29.2
+transformers==5.22.2
+accelerate==1.15.0
+numpy==2.5.4
+pillow==13.0.0
+pydantic==2.14.3
+pyyaml==6.0.3
+tqdm==4.70.1
+huggingface_hub==2.4.0
+gdown==6.5.1

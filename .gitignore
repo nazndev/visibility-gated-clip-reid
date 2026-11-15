@@ -1,0 +1,45 @@
+# Private development instructions. These are not part of the research method.
+instruction/
+private_notes/
+
+# Credentials
+.env
+.env.*
+!.env.example
+secrets/
+.secrets/
+.streamlit/secrets.toml
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Datasets, weights, captures, and generated runs
+/data/
+datasets/
+checkpoints/
+weights/
+cache/
+caches/
+uploads/
+captures/
+demo_gallery/
+outputs/
+logs/
+
+# Machine-specific files
+.DS_Store
+Thumbs.db
+.ipynb_checkpoints/

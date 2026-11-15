@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reidvlm"
+version = "0.1.0"
+description = "Visibility and consistency gated LVLM re-ranking for person re-identification"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Nazmul Nazim" }]
+dependencies = [
+    "torch==2.15.0",
+    "torchvision==0.29.2",
+    "transformers==5.22.2",
+    "accelerate==1.15.0",
+    "numpy==2.5.4",
+    "pillow==13.0.0",
+    "pydantic==2.14.3",
+    "pyyaml==6.0.3",
+    "tqdm==4.70.1",
+    "huggingface_hub==2.4.0",
+    "gdown==6.5.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
