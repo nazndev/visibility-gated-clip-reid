@@ -14,7 +14,7 @@ This file records what was implemented and what was actually run on this machine
 - `configs/iteration2_plan.json`: the grid, seeds, validation rule, and timing protocol, written before the new validation runs.
 - `configs/iteration2_validation_counts.json`: counts from the constructed manifest.
 - `configs/iteration2_selected.json`: the additional configuration chosen from validation mAP.
-- `notebooks/colab_iteration2.ipynb`: a separate notebook. It was not executed.
+- `notebooks/colab_iteration2.ipynb`: the Colab notebook for this iteration. A Tesla T4 session ran the five random seeds below. The notebook output is the record of those scores.
 - `README.md`: token pruning is the current study. The Qwen notebook is labelled historical.
 - `paper/main.tex` and `paper/main.pdf`: the raw top-five rate is no longer described as CMC Rank-5. No new experiment numbers were added to the paper.
 
@@ -44,8 +44,8 @@ The unit-test run reported 12 tests, OK, in 0.961 seconds. It printed `cls_row_m
 - Checkpoint SHA-256: `bedc8fcc37f296045df19d901b162dd032bfa85d9b4f2406eff8313536d444dc`.
 - Git HEAD at the start of the run: `ffb01aabc795afe8bac1c559bdebf479a49628f5`.
 - The working tree was dirty, so cache identities say `ffb01aabc795afe8bac1c559bdebf479a49628f5-dirty`.
-- This iteration has not been committed. `ffb01aa` does not contain this code, so it must not be used as the Colab pin.
-- Device: Apple MPS, not CUDA. `torch` 2.15.0. Machine memory 16 GB. Precision float32. Autocast off. SIE off.
+- The code used for the Colab runs is on `main`. The T4 session reported `torch` 2.15.0+cu132 and a Tesla T4.
+- Local checks before those runs used Apple MPS, `torch` 2.15.0, 16 GB memory, float32, autocast off, and SIE off.
 
 ## Validation manifest
 
@@ -75,7 +75,23 @@ Raw cosine retrieval. k-reciprocal was not run. All five runs used every trainin
 
 Against the full encoder on this same split, block 9 / 96 patches is 0.12 mAP points and 0.26 Rank-1 points lower. Block 6 / 64 patches is 9.62 mAP points and 4.39 Rank-1 points lower. Of 751 queries, block 6 / 64 improves 13 average precisions, worsens 456, and leaves 282 unchanged. Block 9 / 96 improves 29, worsens 57, and leaves 665 unchanged.
 
-The additional configuration is class attention after block 9, keeping 96 patches, reference attention backend. It is the highest of the four validation mAP values. The Rank-1 and latency tie breaks were not used. Random controls were not used. The official test was not used. This choice is not a claim about official-test accuracy.
+The additional configuration is class attention after block 9, keeping 96 patches, reference attention backend. It is the highest of the four validation mAP values. The Rank-1 and latency tie breaks were not used. The official test was not used. This choice is not a claim about official-test accuracy.
+
+## Random controls on the same validation split
+
+Colab, Tesla T4, `torch` 2.15.0+cu132. Block 6, 64 retained patches, reference backend, raw cosine. Each run uses all 751 queries and 12,185 gallery images. k-reciprocal was not run. The score files are on Drive under `visibility-gated-reid/iteration2`, and the notebook cell lists them.
+
+| Seed | mAP | Rank-1 |
+| --- | ---: | ---: |
+| 11 | 78.95 | 89.48 |
+| 23 | 77.58 | 89.48 |
+| 37 | 79.04 | 90.41 |
+| 53 | 79.04 | 89.88 |
+| 71 | 81.16 | 92.41 |
+| Mean | 79.15 | 90.33 |
+| Sample standard deviation | 1.28 | 1.22 |
+
+That standard deviation is variation across random patch selections. It is not uncertainty from separate training runs. Class attention at the same block and patch count, 88.30 mAP and 94.01 Rank-1, is 9.15 mAP points and 3.68 Rank-1 points above this mean. The matched random controls for block 9 with 96 patches were not run.
 
 Raw top-five hit rate is stored separately in each JSON. It is not CMC Rank-5.
 
@@ -124,36 +140,34 @@ The default remains `reference`. The short batch-1 timing did not show the CLS-r
 
 ## Not executed
 
-- Random-seed validation runs for seeds 11, 23, 37, 53, and 71.
-- Mean and standard deviation of random selection on any split. No standard deviation should be read as training uncertainty, because no training was run.
-- The planned 10 / 50 / 3 timing protocol, and any CUDA peak-memory figure.
+- Random controls at block 9 with 96 patches.
+- The planned 10 / 50 / 3 timing protocol, and any CUDA peak-memory figure. The T4 runs were accuracy runs, not timed benchmarks.
 - k-reciprocal on every new configuration.
 - Official-test embeddings for the full encoder, block 6 / 64 attention, its five random controls, block 9 / 96 attention, and its five random controls.
-- Query-level success and failure figures for the new official-test rankings.
-- Any Colab cell. Generating `notebooks/colab_iteration2.ipynb` is not a Colab run.
+- Query-level success and failure figures for a new official-test ranking.
 
 ## Conclusion that the evidence supports
 
-On the identity-seen training split, keeping 64 patches after block 6 lowers cosine mAP by 9.62 points relative to the full frozen encoder, and 456 of 751 queries get a worse average precision. Keeping 96 patches after block 9 lowers mAP by 0.12 points on that same split. Whether either setting holds on the official test, and whether class attention beats a matched random subset, was not measured in this iteration.
+On the identity-seen training split, keeping 64 patches after block 6 lowers cosine mAP by 9.62 points relative to the full frozen encoder, and 456 of 751 queries get a worse average precision. The same cut with random selection is lower still: the five-seed mean is 79.15 mAP, 9.15 points below class attention, with a sample standard deviation of 1.28 points. Keeping 96 patches after block 9 lowers mAP by 0.12 points on that same split. Whether either setting holds on the official test was not measured in this iteration.
 
 A short MPS timing at batch 32 shows the shortened sequence can be faster than the full encoder after selection work is included. The batch-1 random timing does not show a speedup, and neither protocol is the planned repeated benchmark. Half the patches were not treated as half the cost.
 
 ## Next command
 
-Run one matched random control on the same validation manifest. Repeat with seeds 23, 37, 53, and 71, and with block 9 / 96 patches, before interpreting attention against random. Do not pass `--limit`.
+Run the matched random controls for the selected configuration, block 9 and 96 patches, on the same validation manifest. One seed at a time. Do not pass `--limit`.
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m reidvlm prune-embed \
   --config configs/market1501.yaml \
   --split validation \
   --strategy random \
-  --prune-block 6 \
-  --keep 64 \
+  --prune-block 9 \
+  --keep 96 \
   --seed 11 \
   --backend reference \
   --batch-size 32 \
-  --run-dir outputs/iteration2/val_random_b6_k64_s11 \
-  --output outputs/iteration2/val_random_b6_k64_s11.json
+  --run-dir outputs/iteration2/val_random_b9_k96_s11 \
+  --output outputs/iteration2/val_random_b9_k96_s11.json
 ```
 
-The official test is a later command, after those controls. It uses `--split test` and no `--limit`. The Colab notebook should pin a commit that actually contains this code.
+Repeat with seeds 23, 37, 53, and 71. The official test is a later command. It uses `--split test` and no `--limit`.
