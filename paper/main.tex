@@ -55,7 +55,7 @@ Market-1501 collects six cameras in an outdoor campus scene and evaluates single
 The numbers below use that protocol and do not add the optional 500{,}000 distractors.
 
 CLIP-ReID starts from CLIP's image tower and learns re-identification prompts and an image encoder on the training split \cite{li2023clipreid}.
-The published ViT result without side-information embeddings and without online instance matching is 89.6\% mAP and 95.5\% Rank-1.
+The published ViT result without side-information embeddings or overlapping patches (OLP) is 89.6\% mAP and 95.5\% Rank-1.
 This project loads that released ViT-B/16 checkpoint and does not repeat its training.
 Camera side-information embeddings are off, matching the published row used for comparison.
 
@@ -127,8 +127,9 @@ Both follow the usual Market-1501 definitions.
 \section{Results}
 \subsection{The unpruned checkpoint}
 Table~\ref{tab:visual} checks that the loaded weights are the published model before any token is removed.
-The checkpoint is within 0.2 points of mAP and 0.5 points of Rank-1 of the number published for this ViT configuration.
-That gap is small enough to treat the checkpoint as reproduced.
+The checkpoint is within 0.2 points of mAP of the published number.
+Rank-1 is 94.98 against the published 95.50, a difference of 0.52 percentage points.
+That gap is small enough to treat the checkpoint as an approximate reproduction.
 k-reciprocal raises mAP by 5.07 points on these same features.
 It uses gallery-gallery and query-query relations, so it is a different use of the vectors, not a change to the transformer.
 
@@ -167,6 +168,7 @@ k-reciprocal, 64 patches & 65 & 88.40 & 90.62 & 95.13 & 96.26 \\
 \end{tabular}
 \end{table}
 
+Here, cost means the loss in retrieval accuracy, not a measured change in latency or FLOPs.
 Keeping half of the patches costs 14.55 points of mAP and 6.05 points of Rank-1.
 Rank-10 falls only from 98.99 to 97.57.
 The first true match is often still near the front, while the order of the rest of the true matches is worse, which is why mAP moves more than Rank-1.
@@ -178,10 +180,12 @@ Pruning therefore does not only reshuffle a short list.
 It changes the features of every query and every gallery image before any list is built.
 
 Figure~\ref{fig:prune} shows which patches survive for one query.
+By layer 6 the class token and the patch tokens have already mixed, so a retained patch is not a pure image region.
 Dark blocks were not passed to layers 7--12.
-The dress, hair, and legs remain, and much of the background is removed.
+On this one image the dress, hair, and legs remain and much of the background is dark.
+That picture does not establish that the selector keeps the person and drops the background across Market-1501.
 On this query against five gallery crops, the different identity stayed last with and without pruning, while two photographs of the same person exchanged second and third place.
-That list is an illustration of the selected tokens.
+That list illustrates the selected tokens for this image.
 The Market-1501 numbers are Table~\ref{tab:prune}.
 
 \begin{figure}[t]
@@ -195,12 +199,13 @@ The Market-1501 numbers are Table~\ref{tab:prune}.
 The experiment has one intervention and a matched pair of evaluations.
 The person, the cameras, the checkpoint, and the metric stay fixed.
 Only the token sequence changes.
-That is what makes the 14.55-point mAP gap interpretable: it is the cost of discarding the 64 patches the class token attended to least, inside a model that still expected to see them.
+That is what makes the 14.55-point mAP gap interpretable: it is the accuracy loss from discarding the 64 patches the class token attended to least, inside a model that still expected to see them.
+It is not a measurement of saved computation.
 
-Two observations keep the result from being only a lower number.
-First, Rank-10 stays high, so identity evidence is concentrated in the patches the class token already prefers.
-The figure agrees with that reading on one image: the kept blocks lie on the body.
-Second, k-reciprocal can repair a large part of the damage without looking at tokens at all.
+Rank-10 remains high, which means a true match is still usually inside the first ten allowed gallery images.
+It does not show that identity information sits only in the retained patch locations.
+The figure is one image, and those tokens have already exchanged information with their neighbours.
+k-reciprocal can repair a large part of the damage without looking at tokens at all.
 The pruned vectors are weaker, and they are not unstructured.
 Neighbor relations among them still carry identity.
 
@@ -215,11 +220,12 @@ Finally, the selection rule is the class-attention rule from image classificatio
 The contribution is the measurement of that rule on person re-identification, under a frozen CLIP-ReID checkpoint and the official Market-1501 protocol.
 
 \section{Conclusion}
-A frozen CLIP-ReID checkpoint reproduces the published Market-1501 operating point at 89.41\% mAP and 94.98\% Rank-1.
+A frozen CLIP-ReID checkpoint approximately reproduces the published Market-1501 operating point, at 89.41\% mAP and 94.98\% Rank-1.
 Inside that transformer, the class token selects 64 of 128 patches after layer 6, and the remaining layers rank people from 65 tokens instead of 129.
 On all 3{,}368 queries the pruned ranking scores 74.86\% mAP and 88.93\% Rank-1.
 k-reciprocal raises the pruned result to 88.40\% mAP and does not recover the unpruned list.
-Half of the patches can be removed without losing the person in the token map, and the ranking pays 14.55 points of mAP for that removal.
+The accuracy cost of that removal is 14.55 points of mAP.
+The patch figure shows one query only.
 
 \bibliographystyle{plainnat}
 \bibliography{references}

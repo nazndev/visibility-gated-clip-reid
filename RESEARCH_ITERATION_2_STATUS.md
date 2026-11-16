@@ -102,7 +102,9 @@ Raw top-five hit rate is stored separately in each JSON. It is not CMC Rank-5.
 
 ## Timing
 
-Scope A is an input tensor already on the device, through the final L2-normalised descriptor, including selection. These are short local protocols, not the planned 10 warm-up / 50 measured / 3 trial protocol. With one trial, p90 is not a spread.
+Correction: the timings below were collected by calling the encoder without `torch.inference_mode()`, so gradient tracking was still enabled. They are preliminary. The original values and the short protocol are kept. They are not a corrected speed measurement.
+
+Scope A is an input tensor already on the device, through the final L2-normalised descriptor, including selection. These are short local protocols, not the planned 10 warm-up / 50 measured / 3 trial protocol. The reported p90 was a percentile of trial averages, not of individual batches.
 
 Batch 1, warm-up 3, 10 iterations, 2 trials, block 6, 64 patches:
 

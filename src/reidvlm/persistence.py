@@ -335,6 +335,65 @@ class RunStore:
         self.publish_json(f"features/{key}.json", meta, replace=True)
         return published
 
+    def _chunk_root(self, identity: dict) -> str:
+        return f"chunks/{self.feature_key(identity)}"
+
+    def save_feature_chunk(self, identity: dict, sample_ids: list[str], rows: np.ndarray) -> dict:
+        """Write one immutable chunk. A second write of the same ids must match."""
+        root = self._chunk_root(identity)
+        identity_rel = f"{root}/identity.json"
+        if self.is_verified(identity_rel):
+            recorded = json.loads((self.run_dir / identity_rel).read_text())
+            if recorded.get("identity") != identity:
+                raise ValueError("Feature cache identity does not match the requested run.")
+        else:
+            self.publish_json(identity_rel, {"identity": identity, "storage": "chunks-v1"})
+        chunk_id = sha256_json({"ids": list(sample_ids)})[:16]
+        relative = f"{root}/{chunk_id}.npz"
+        array = self._chunk_bytes(sample_ids, rows)
+        if self.is_verified(relative):
+            current = self._read_chunk(relative)
+            if current[0] != list(sample_ids) or not np.allclose(current[1], rows):
+                raise ValueError("Immutable feature chunk already exists with different rows.")
+            return {"relative": relative, "reused": True}
+        return self.publish_bytes(relative, array)
+
+    def load_feature_chunks(self, identity: dict) -> dict[str, np.ndarray]:
+        root = self._chunk_root(identity)
+        identity_rel = f"{root}/identity.json"
+        if not self.is_verified(identity_rel):
+            return {}
+        recorded = json.loads((self.run_dir / identity_rel).read_text())
+        if recorded.get("identity") != identity:
+            raise ValueError("Feature cache identity does not match the requested run.")
+        table: dict[str, np.ndarray] = {}
+        directory = self.run_dir / root
+        for path in sorted(directory.glob("*.npz")):
+            relative = f"{root}/{path.name}"
+            if not self.is_verified(relative):
+                raise ValueError(f"Unverified feature chunk: {relative}")
+            ids, rows = self._read_chunk(relative)
+            for item, row in zip(ids, rows):
+                if item in table:
+                    raise ValueError(f"Duplicate feature row: {item}")
+                table[item] = row
+        return table
+
+    def _chunk_bytes(self, sample_ids: list[str], rows: np.ndarray) -> bytes:
+        incoming = self.run_dir / ".incoming"
+        incoming.mkdir(parents=True, exist_ok=True)
+        target = incoming / "chunk.npz"
+        np.savez(target, ids=np.array(sample_ids), rows=np.asarray(rows, dtype=np.float32))
+        data = target.read_bytes()
+        target.unlink()
+        return data
+
+    def _read_chunk(self, relative: str) -> tuple[list[str], np.ndarray]:
+        payload = np.load(self.run_dir / relative)
+        ids = [str(item) for item in payload["ids"].tolist()]
+        rows = np.asarray(payload["rows"], dtype=np.float32)
+        return ids, rows
+
 
 def demo_worker(run_dir: str, total: int, die_after: int | None = None) -> None:
     """Write numbered items. Used by the interruption test, not by the benchmark."""

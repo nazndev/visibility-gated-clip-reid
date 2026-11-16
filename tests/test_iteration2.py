@@ -10,8 +10,11 @@ import numpy as np
 import torch
 
 from reidvlm.encoders.clip_reid import CLIPReIDViT, ResidualAttentionBlock, VisionTransformer
-from reidvlm.evaluation.metrics import evaluate_rankings
 from reidvlm.persistence import RunStore
+from reidvlm.pruning.benchmark import time_encoder
+from reidvlm.pruning.identity import EXECUTION_FILES, execution_identity, file_sha256, source_snapshot
+from reidvlm.pruning.study import resume_embed_chunks
+from reidvlm.evaluation.metrics import evaluate_rankings
 from reidvlm.pruning.selection import (
     SelectionConfig,
     cls_patch_scores,
@@ -203,9 +206,109 @@ class MetricFixture(unittest.TestCase):
         with self.assertRaises(ValueError):
             evaluate_rankings(np.array([[0]]), np.array([1]), np.array([1]), np.array([0]), np.array([0]))
 
+    def test_first_positive_rank_is_not_truncated_at_ten(self):
+        order = np.arange(12)[None, :]
+        result = evaluate_rankings(
+            order,
+            np.array([1]),
+            np.array([2] * 11 + [1]),
+            np.array([0]),
+            np.array([1] * 12),
+        )
+        self.assertEqual(result.per_query[0].first_positive_rank, 12)
+        self.assertEqual(result.per_query[0].cmc_hits[0], 0)
+
     def test_paired_changes(self):
         changes = paired_query_changes([0.2, 0.4, 0.5], [0.3, 0.1, 0.5])
         self.assertEqual(changes, {"improved": 1, "worsened": 1, "unchanged": 1, "queries": 3})
+
+
+class AuditTests(unittest.TestCase):
+    def test_benchmark_disables_gradients_and_keeps_weights(self):
+        holder = type("Holder", (), {})()
+        holder.model = CLIPReIDViT(32, 32, 16, False, 6, 1.0)
+        holder.device = "cpu"
+        holder.model.selection = None
+        before = {key: value.detach().clone() for key, value in holder.model.state_dict().items()}
+        flags = []
+
+        def hook(_module, _inputs, _output):
+            flags.append(torch.is_grad_enabled())
+
+        handle = holder.model.bottleneck.register_forward_hook(hook)
+        try:
+            report = time_encoder(holder, torch.randn(1, 3, 32, 32), ["image-a"], warmup=1, iterations=2, trials=1)
+        finally:
+            handle.remove()
+        self.assertTrue(flags)
+        self.assertTrue(all(flag is False for flag in flags))
+        self.assertFalse(report["grad_enabled_during_timing"])
+        self.assertEqual(len(report["batch_wall_ms"]), 2)
+        self.assertEqual(report["p90_batch_wall_ms"], float(np.percentile(report["batch_wall_ms"], 90)))
+        for key, value in holder.model.state_dict().items():
+            self.assertTrue(torch.equal(before[key], value), key)
+
+    def test_image_bytes_change_the_execution_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "same-name.jpg"
+            path.write_bytes(b"image-one")
+            first = execution_identity({"image": file_sha256(path)})
+            path.write_bytes(b"image-two")
+            second = execution_identity({"image": file_sha256(path)})
+        self.assertNotEqual(first["execution_sha256"], second["execution_sha256"])
+
+    def test_documentation_is_outside_the_execution_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            code = root / "src/reidvlm/pruning/identity.py"
+            code.parent.mkdir(parents=True)
+            code.write_text("token = 1\n")
+            (root / "README.md").write_text("first draft\n")
+            before = source_snapshot(root)["execution_source_sha256"]
+            (root / "README.md").write_text("edited documentation only\n")
+            after_docs = source_snapshot(root)["execution_source_sha256"]
+            code.write_text("token = 2\n")
+            after_code = source_snapshot(root)["execution_source_sha256"]
+        self.assertEqual(before, after_docs)
+        self.assertNotEqual(before, after_code)
+        self.assertNotIn("README.md", EXECUTION_FILES)
+        self.assertIn("src/reidvlm/cli.py", EXECUTION_FILES)
+
+    def test_seed_change_rejects_the_saved_chunk_identity(self):
+        identity = {"storage": "chunks-v1", "selection": {"seed": 11}, "execution_sha256": "a" * 64}
+        other = {"storage": "chunks-v1", "selection": {"seed": 23}, "execution_sha256": "b" * 64}
+        with tempfile.TemporaryDirectory() as directory:
+            store = RunStore(Path(directory))
+            store.prepare()
+            store.save_feature_chunk(identity, ["img-0"], np.array([[1.0, 2.0]], dtype=np.float32))
+            self.assertEqual(len(store.load_feature_chunks(other)), 0)
+            key = store.feature_key(identity)
+            store.publish_json(
+                f"chunks/{key}/identity.json",
+                {"identity": other, "storage": "chunks-v1"},
+                replace=True,
+            )
+            with self.assertRaises(ValueError):
+                store.load_feature_chunks(identity)
+
+    def test_chunk_resume_matches_an_uninterrupted_run(self):
+        identity = {"storage": "chunks-v1", "execution_sha256": "c" * 64}
+        ids = [f"img-{index}" for index in range(4)]
+
+        def embed(missing):
+            return np.array([[float(int(item.split("-")[1])), 1.0] for item in missing], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as directory:
+            full = RunStore(Path(directory) / "full")
+            full.prepare()
+            expected = resume_embed_chunks(full, identity, ids, embed, chunk_size=2)
+            partial = RunStore(Path(directory) / "partial")
+            partial.prepare()
+            resume_embed_chunks(partial, identity, ids[:2], embed, chunk_size=2)
+            resumed = resume_embed_chunks(partial, identity, ids, embed, chunk_size=2)
+            self.assertEqual(len(list((Path(directory) / "partial").glob("chunks/*/*.npz"))), 2)
+        self.assertTrue(np.allclose(expected, resumed))
+        self.assertEqual(len(resumed), 4)
 
 
 if __name__ == "__main__":

@@ -375,6 +375,8 @@ class CLIPReIDEncoder:
         self.set_token_pruning(keep_ratio, prune_layer)
         self.model.to(self.device)
         self.model.eval()
+        for parameter in self.model.parameters():
+            parameter.requires_grad_(False)
         patches = report["positional_tokens"] - 1
         kept = patches if keep_ratio >= 1.0 else max(1, int(round(patches * keep_ratio)))
         self.info = EncoderInfo(

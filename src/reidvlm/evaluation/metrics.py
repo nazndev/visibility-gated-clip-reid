@@ -24,6 +24,7 @@ class QueryMetrics:
     valid_positive_count: int
     shortlist_hit: bool | None
     shortlist_positive_count: int
+    first_positive_rank: int | None = None
 
 
 @dataclass
@@ -89,6 +90,7 @@ def evaluate_rankings(
             per_query.append(QueryMetrics(True, None, [], None, 0, None, 0))
             continue
         ap = average_precision(matches)
+        first_positive_rank = int(np.flatnonzero(matches)[0]) + 1
         cmc = np.minimum(np.cumsum(matches), 1)
         if len(cmc) < max_rank:
             cmc = np.pad(cmc, (0, max_rank - len(cmc)), constant_values=int(cmc[-1]))
@@ -116,6 +118,7 @@ def evaluate_rankings(
                 positive_count,
                 shortlist_hit,
                 raw_positive,
+                first_positive_rank,
             )
         )
     if not aps:

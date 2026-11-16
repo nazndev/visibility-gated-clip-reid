@@ -343,7 +343,7 @@ def cmd_prune_manifest(args) -> int:
 def cmd_prune_benchmark(args) -> int:
     from reidvlm.data.images import load_rgb
     from reidvlm.encoders.clip_reid import preprocess
-    from reidvlm.pruning.benchmark import time_encoder
+    from reidvlm.pruning.benchmark import time_methods
     from reidvlm.pruning.selection import SelectionConfig, content_id_from_tensor
 
     config, encoder = _encoder_from_config(args.config)
@@ -357,26 +357,27 @@ def cmd_prune_benchmark(args) -> int:
     )
     content_ids = [content_id_from_tensor(row) for row in tensor]
     patches = encoder.model.image_encoder.grid_h * encoder.model.image_encoder.grid_w
-    settings = [
-        None,
-        SelectionConfig("cls_attention", args.prune_block, args.keep, None, "reference", patches),
-        SelectionConfig("cls_attention", args.prune_block, args.keep, None, "cls_row", patches),
-        SelectionConfig("random", args.prune_block, args.keep, args.seed, "reference", patches),
+    methods = [
+        {"name": "full", "selection": None},
+        {"name": "cls_attention_reference", "selection": SelectionConfig("cls_attention", args.prune_block, args.keep, None, "reference", patches)},
+        {"name": "cls_attention_cls_row", "selection": SelectionConfig("cls_attention", args.prune_block, args.keep, None, "cls_row", patches)},
+        {"name": "random", "selection": SelectionConfig("random", args.prune_block, args.keep, args.seed, "reference", patches)},
     ]
+    measured = time_methods(encoder, tensor, content_ids, methods, args.warmup, args.iterations, args.trials, order_seed=553)
+    full_ms = float(np.median([row["median_batch_wall_ms"] for row in measured["methods"]["full"]]))
     rows = []
-    full_ms = None
-    for selection in settings:
-        encoder.set_token_pruning(1.0, 6)
-        encoder.set_selection(selection)
-        row = time_encoder(encoder, tensor, content_ids, args.warmup, args.iterations, args.trials)
-        if selection is None:
-            full_ms = row["median_batch_ms"]
-        row["speedup_vs_full"] = None if not full_ms else full_ms / row["median_batch_ms"]
-        rows.append(row)
+    for name, trials in measured["methods"].items():
+        for row in trials:
+            row["speedup_vs_full_wall"] = None if not full_ms else full_ms / row["median_batch_wall_ms"]
+            rows.append(row)
     payload = {
         "label": "benchmark",
-        "protocol": {"warmup": args.warmup, "iterations": args.iterations, "trials": args.trials, "batch_size": args.batch_size},
-        "note": "Encoder inference only. Gallery search is not included. A short local protocol is not the proposed 10/50/3 Colab protocol.",
+        "protocol_requested": {"warmup": 10, "iterations": 50, "trials": 3, "batch_sizes": [1, 32], "precision": "float32", "autocast": False},
+        "protocol_executed": {"warmup": args.warmup, "iterations": args.iterations, "trials": args.trials, "batch_size": args.batch_size},
+        "planned_protocol": args.warmup == 10 and args.iterations == 50 and args.trials == 3 and args.batch_size in (1, 32),
+        "order_seed": measured["order_seed"],
+        "trial_orders": measured["trial_orders"],
+        "note": "Device-resident encoder only. CUDA-event time is stored separately from synchronized wall-clock time. Image loading is excluded.",
         "rows": rows,
     }
     if args.output:
@@ -402,8 +403,10 @@ def cmd_prune_smoke(args) -> int:
     encoder.set_selection(attention)
     pruned = encoder.embed_images(images)
     attention_tokens = list(encoder.model.image_encoder.last_tokens_per_block)
+    reference_indices = encoder.model.image_encoder.last_kept_patch_index.detach().cpu()
     encoder.set_selection(SelectionConfig("cls_attention", 6, 64, None, "cls_row", patches))
     alternative = encoder.embed_images(images)
+    cls_row_indices = encoder.model.image_encoder.last_kept_patch_index.detach().cpu()
     encoder.set_selection(SelectionConfig("random", 6, 64, 11, "reference", patches))
     random_a = encoder.embed_images(images)
     random_b = encoder.embed_images(list(reversed(images)))
@@ -416,6 +419,8 @@ def cmd_prune_smoke(args) -> int:
         "descriptor_dim": int(full.shape[1]),
         "max_abs_full_vs_attention": float(np.max(np.abs(full - pruned))),
         "max_abs_reference_vs_cls_row": float(np.max(np.abs(pruned - alternative))),
+        "reference_vs_cls_row_indices_equal": bool(torch.equal(reference_indices, cls_row_indices)),
+        "reference_vs_cls_row_index_mismatches": int((reference_indices != cls_row_indices).sum()),
         "random_order_max_abs": float(np.max(np.abs(random_a - random_b[::-1]))),
         "names": [Path(sample.path).name for sample in chosen],
     }
@@ -432,9 +437,10 @@ def cmd_prune_embed(args) -> int:
     from reidvlm.data.images import load_rgb
     from reidvlm.encoders.clip_reid import preprocess
     from reidvlm.persistence import RunStore
+    from reidvlm.pruning.identity import execution_identity, file_sha256
     from reidvlm.pruning.selection import SelectionConfig, content_id_from_tensor, same_selection
-    from reidvlm.pruning.study import build_validation_manifest, resume_embed, score_split
-    from reidvlm.runtime import sha256_file, sha256_json, source_revision
+    from reidvlm.pruning.study import build_validation_manifest, resume_embed_chunks, score_split
+    from reidvlm.runtime import sha256_file, source_revision
 
     config, encoder = _encoder_from_config(args.config)
     market = Market1501.load(resolve_path(config.dataset.root))
@@ -459,22 +465,37 @@ def cmd_prune_embed(args) -> int:
     encoder.set_selection(selection if args.strategy != "none" else None)
     ordered = queries + gallery
     manifest_ids = [item["path"] for item in ordered]
-    identity = {
-        "selection": selection.identity(),
-        "checkpoint_sha256": sha256_file(resolve_path(config.encoder.checkpoint)),
-        "preprocess": {
-            "height": encoder.image_height,
-            "width": encoder.image_width,
-            "mean": encoder.pixel_mean,
-            "std": encoder.pixel_std,
-            "descriptor": "bn768_cls_cat_bn512_proj_l2",
-        },
-        "manifest_sha256": sha256_json(manifest_ids),
-        "precision": "float32",
-        "source_revision": source_revision(),
-        "split": args.split,
-        "limited": limited,
-    }
+    manifest_rows = []
+    for index, item in enumerate(ordered):
+        manifest_rows.append(
+            {
+                "role": "query" if index < len(queries) else "gallery",
+                "name": Path(item["path"]).name,
+                "content_sha256": file_sha256(Path(item["path"])),
+                "pid": item["pid"],
+                "camid": item["camid"],
+            }
+        )
+    identity = execution_identity(
+        {
+            "selection": selection.identity(),
+            "checkpoint_sha256": sha256_file(resolve_path(config.encoder.checkpoint)),
+            "preprocess": {
+                "height": encoder.image_height,
+                "width": encoder.image_width,
+                "mean": encoder.pixel_mean,
+                "std": encoder.pixel_std,
+                "descriptor": "bn768_cls_cat_bn512_proj_l2",
+                "implementation": "reidvlm.encoders.clip_reid.preprocess",
+            },
+            "manifest": manifest_rows,
+            "precision": "float32",
+            "autocast": False,
+            "split": args.split,
+            "limited": limited,
+            "counts": {"queries": len(queries), "gallery": len(gallery)},
+        }
+    )
     by_path = {item["path"]: item for item in ordered}
     store = RunStore(resolve_path(args.run_dir))
     store.prepare()
@@ -493,24 +514,46 @@ def cmd_prune_embed(args) -> int:
                 rows.append(encoder.model(tensors.to(encoder.device), None, ids).detach().cpu().numpy())
         return np.concatenate(rows, axis=0)
 
-    features = resume_embed(store, identity, manifest_ids, embed_missing, chunk_size=args.batch_size)
+    features = resume_embed_chunks(store, identity, manifest_ids, embed_missing, chunk_size=args.batch_size)
     features = features / np.maximum(np.linalg.norm(features, axis=1, keepdims=True), 1e-12)
     query_features = features[: len(queries)]
     gallery_features = features[len(queries) :]
     scored = score_split(query_features, gallery_features, queries, gallery)
+    evaluation = (
+        {
+            "protocol": "training-derived validation",
+            "identity_seen": True,
+            "note": "The encoder was trained on these identities and source training images. This is not an official Market-1501 test result.",
+        }
+        if args.split == "validation"
+        else {
+            "protocol": "official Market-1501 test",
+            "identity_seen": False,
+            "note": "Official query and gallery lists after junk removal. Same-person same-camera gallery images are excluded at scoring time.",
+        }
+    )
     payload = {
         "label": "smoke" if limited else "full",
         "not_a_market_score": bool(limited or args.split != "test"),
+        "evaluation": evaluation,
         "identity": identity,
         "counts": {"queries": len(queries), "gallery": len(gallery)},
-        "scores": {key: value for key, value in scored.items() if key != "per_query_ap"},
+        "scores": {key: value for key, value in scored.items() if key not in {"per_query_ap", "per_query_first_positive_rank"}},
         "per_query_ap": scored["per_query_ap"],
+        "per_query_first_positive_rank": scored["per_query_first_positive_rank"],
         "kreciprocal": "not_run",
+        "git": source_revision(),
+        "legacy_cache_note": "Runs saved before chunks-v1 are not reused. Their files stay in place. Image-content hashes were not stored for those runs, so equivalence with this code is not assumed.",
     }
     destination = resolve_path(args.output) if args.output else resolve_path(args.run_dir) / "score.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(payload))
-    printable = {key: value for key, value in payload.items() if key != "per_query_ap"}
+    printable = {key: value for key, value in payload.items() if key not in {"per_query_ap", "per_query_first_positive_rank", "identity"}}
+    printable["execution_sha256"] = identity.get("execution_sha256")
+    printable["execution_source_sha256"] = identity.get("execution_source_sha256")
+    printable["checkpoint_sha256"] = identity.get("checkpoint_sha256")
+    printable["selection"] = identity.get("selection")
+    printable["git"] = payload["git"]
     _print(printable)
     return 0
 

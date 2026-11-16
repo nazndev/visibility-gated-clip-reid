@@ -219,6 +219,9 @@ def score_split(query_features: np.ndarray, gallery_features: np.ndarray, querie
         "raw_top5_positive_coverage": result.positive_coverage_at_k,
         "raw_top5_note": "Computed on the unfiltered top 5. Same-person same-camera images can occupy a slot. This is not CMC Rank-5.",
         "per_query_ap": [item.ap for item in result.per_query if item.ap is not None],
+        "per_query_first_positive_rank": [
+            None if item.excluded else item.first_positive_rank for item in result.per_query
+        ],
     }
 
 
@@ -244,4 +247,23 @@ def resume_embed(store: RunStore, identity: dict, ids: list[str], embed_missing,
     reloaded = store.load_feature_table(identity)
     if reloaded is None:
         raise RuntimeError("Saved feature table failed verification.")
+    return np.stack([reloaded[item] for item in ids]).astype(np.float32)
+
+
+def resume_embed_chunks(store: RunStore, identity: dict, ids: list[str], embed_missing, chunk_size: int = 32) -> np.ndarray:
+    """Save each new batch as its own verified chunk. Earlier chunks are not rewritten."""
+    table = store.load_feature_chunks(identity)
+    unknown = [item for item in table if item not in ids]
+    if unknown:
+        raise ValueError("Feature cache contains identifiers outside this manifest.")
+    missing = [item for item in ids if item not in table]
+    for start in range(0, len(missing), chunk_size):
+        batch = missing[start : start + chunk_size]
+        fresh = np.asarray(embed_missing(batch), dtype=np.float32)
+        if len(fresh) != len(batch):
+            raise RuntimeError("Embedding resumed the wrong number of rows.")
+        store.save_feature_chunk(identity, batch, fresh)
+    reloaded = store.load_feature_chunks(identity)
+    if any(item not in reloaded for item in ids):
+        raise RuntimeError("A resumed chunk did not verify.")
     return np.stack([reloaded[item] for item in ids]).astype(np.float32)
