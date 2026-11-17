@@ -19,17 +19,17 @@ CSE553.1 Computer Vision \\ Course faculty: Dr.\ Nabeel Mohammed (NbM)}
 
 \begin{abstract}
 Person re-identification ranks gallery photographs so that other views of the person in a query crop come first.
-This paper asks how much of that ranking survives when half of the patch tokens are removed from a frozen vision transformer.
-The encoder is the published CLIP-ReID ViT-B/16 checkpoint trained on Market-1501.
-It is not retrained.
-On the standard single-query test the full token sequence scores 89.41\% mAP and 94.98\% Rank-1, against the published 89.6\% and 95.5\%.
-Each $256 \times 128$ crop enters the network as 128 patch tokens plus one class token.
-After layer 6, the class token keeps the 64 patches it attends to most, and layers 7--12 run on 65 tokens instead of 129.
-On the same 3{,}368 queries the pruned encoder scores 74.86\% mAP and 88.93\% Rank-1.
-k-reciprocal re-ranking on the pruned features recovers the score to 88.40\% mAP, which is still below the unpruned list.
-The class token is never dropped.
-On an illustrated query the surviving patches cover the person and the discarded patches are mostly background.
-The result is the measured cost of that cut, not a claim that pruning improves re-identification.
+This paper measures how inference-time patch selection, pruning depth, and the number of retained tokens change retrieval accuracy and measured latency in a frozen CLIP-ReID ViT-B/16 encoder.
+The encoder is not retrained.
+Selection, when used, runs after a complete transformer block.
+The class token is kept, surviving patches stay in their original spatial order, and the later blocks run on that shorter sequence.
+No discarded token is fused back, and no pruning weight is learned.
+On the official Market-1501 test the full encoder scores 89.41\% mAP and 94.98\% Rank-1, an approximate reproduction of the published 89.6\% and 95.5\%.
+Keeping the 64 patches most attended by the class token after block 6 lowers that test to 74.86\% mAP and 88.93\% Rank-1.
+Keeping 96 patches after block 9 scores 89.27\% mAP and 95.13\% Rank-1.
+At both settings, five random patch selections score below the class-attention rule.
+A Tesla T4 timing run does not establish a speedup: at batch 32 the full encoder's own trial medians move from 241.5\,ms to 313.7\,ms.
+The patch figure shows one query only.
 \end{abstract}
 
 \section{Introduction}
@@ -44,11 +44,14 @@ Those patches, together with one class token, pass through all 12 layers, but th
 The patch tokens are therefore computed in full and then discarded, except for the information they have already written into the class token through attention.
 Token pruning asks whether the later layers need every patch \cite{liang2022evit}.
 
-This paper makes one controlled cut inside a checkpoint that was not trained to be pruned.
-After layer 6, only the patches most attended by the class token continue.
-The same Market-1501 test is then repeated.
 The question is not whether a shorter sequence can beat the published model.
-The question is how person ranking changes when half of the patches are removed and nothing else is retrained.
+For this frozen encoder, how do inference-time patch selection, the block at which the cut is made, and the number of retained patches change retrieval accuracy and measured inference cost?
+Two cuts are measured.
+After block 6 the class token keeps 64 of 128 patches.
+After block 9 it keeps 96.
+The second cut was fixed from a validation comparison before the official-test scores in this revision were used, and it was not changed afterward.
+A uniform random selection at the same block and the same patch count is the control.
+The result is a measurement, not a new pruning algorithm and not a complete reproduction of EViT.
 
 \section{Related work}
 Market-1501 collects six cameras in an outdoor campus scene and evaluates single-query search after removing junk detections and same-camera matches of the query identity \cite{zheng2015market}.
@@ -66,10 +69,10 @@ The experiment here copies the selection rule, applies it once at inference, and
 No pruning weights are learned.
 
 k-reciprocal re-ranking is a feature-space method from 2017 \cite{zhong2017kreciprocal}.
-It is reported on both the full and the pruned features, with the original neighborhood sizes $k_1{=}20$, $k_2{=}6$, and mixture weight $0.3$.
+It was run on the first full-encoder and block-6 measurements, with neighborhood sizes $k_1{=}20$, $k_2{=}6$, and mixture weight $0.3$.
 The CLIP-ReID code uses a larger neighborhood; that variant is not substituted.
 k-reciprocal does not see the image tokens.
-It tests whether a standard reranker can repair a list that was built from a shorter token sequence.
+It was not run on the block-9 setting or on the random controls reported below.
 
 \section{Method}
 \subsection{Unpruned ranking}
@@ -84,19 +87,32 @@ Gallery entries whose filename marks them as junk are removed before ranking.
 A gallery photograph of the same person taken by the same camera as the query is ignored when mAP and Rank-$k$ are computed.
 
 \subsection{Where the tokens are cut}
-The first six transformer layers run on all 129 tokens.
-At layer 6 the attention weights are averaged over the 12 heads.
-The score of a patch is the attention from the class token to that patch.
-The 64 highest-scoring patches are kept and written back in their original left-to-right, top-to-bottom order.
-The class token is always kept, so layers 7--12 receive 65 tokens.
-Position vectors are not recomputed: each surviving token already carries the position that was added before layer 1.
-The search vector is read from the class token in the usual way.
-When the keep ratio is 1, the original 12-layer path is used unchanged, so the baseline is the unpruned checkpoint.
+Pruning, when used, happens after a complete transformer block.
+The class token is always kept.
+The retained patches are gathered in their original left-to-right, top-to-bottom order, and the remaining blocks run on that shorter sequence.
+Position vectors are added once, before block 1, and are not recomputed.
+The search vector is still the 1{,}280-dimensional normalized descriptor from the class token.
+Batch-normalization running statistics stay at the values stored in the checkpoint.
+The same selection settings are used for every query and every gallery image.
 
-The cut is deliberately simple.
-There is one pruning layer and one keep ratio.
+Two selectors are compared.
+Class attention scores each patch by the class token's attention, averaged across heads after the softmax, and keeps the highest scores.
+A tie keeps the earlier spatial index.
+The reference implementation obtains those scores from a separate attention call with weights enabled.
+That extra call is part of the measured cost.
+A second implementation reads the class-token row directly.
+It is reported only as an implementation comparison in the timing run.
+It is not substituted for the reference scores in the accuracy tables.
+Random selection draws the same number of patches uniformly, without replacement.
+The draw for an image is fixed by the experiment seed and a hash of that image's preprocessed pixels.
+It does not use the label, and it does not compute attention weights.
+The accuracy seeds are 11, 23, 37, 53, and 71.
+
+The two cuts are after block 6, keeping 64 patches, and after block 9, keeping 96.
+The second was the additional configuration with the highest validation mAP in an earlier attention comparison.
+It was not chosen or changed using the official-test scores below.
 The checkpoint is frozen.
-A learned pruner, a second pruning stage, or a search over layers would be a different experiment, and those settings are not reported here.
+There is no learned pruner and no fusion of discarded tokens.
 
 \section{Experimental setup}
 Market-1501 is used under the standard single-query protocol.
@@ -108,17 +124,20 @@ The checkpoint hash is
 \small\texttt{bedc8fcc37f296045df19d901b162dd032bfa85d9b4f2406eff8313536d444dc}.
 \end{center}
 
-Both rankings were run on a Colab T4.
+The first full-encoder and block-6 measurements were run on a Colab T4.
 The unpruned ranking was also run on an Apple M4 with Metal.
 Rank-1, Rank-5, and Rank-10 agreed exactly between those two devices, and mAP differed only in the ninth significant digit.
-The tables use the T4 figures.
+Tables~\ref{tab:visual} and~\ref{tab:prune} use those T4 files:
 \begin{center}
 \small
 \begin{tabular}{@{}ll@{}}
 Unpruned & \texttt{market1501\_test\_20261115T182047Z.json} \\
-Pruned & \texttt{market1501\_test\_20261115T183006Z.json}
+Pruned & \texttt{market1501\_test\_20261115T183006Z.json} \\
 \end{tabular}
 \end{center}
+The validation, official-test comparison, and timing results that follow were run later on one Tesla T4, from code revision \texttt{d143dbdbd690f70315cb706403980eddf09279e9}, in FP32 with autocast off.
+Their printed scores are in \texttt{notebooks/colab\_iteration2\_v2.ipynb}.
+k-reciprocal was not repeated for those runs.
 
 Rank-1 is the fraction of queries whose first allowed gallery image has the query identity.
 mAP averages, over queries, the quality of the whole list of true matches.
@@ -169,7 +188,8 @@ k-reciprocal, 64 patches & 65 & 88.40 & 90.62 & 95.13 & 96.26 \\
 \end{table}
 
 Here, cost means the loss in retrieval accuracy, not a measured change in latency or FLOPs.
-Keeping half of the patches costs 14.55 points of mAP and 6.05 points of Rank-1.
+Keeping half of the patches costs 14.55 points of mAP.
+The unrounded Rank-1 drop is 6.06 points; subtracting the two-decimal table entries gives 6.05.
 Rank-10 falls only from 98.99 to 97.57.
 The first true match is often still near the front, while the order of the rest of the true matches is worse, which is why mAP moves more than Rank-1.
 k-reciprocal recovers 13.54 points of the pruned mAP, from 74.86 to 88.40, and still finishes 1.01 points below the unpruned encoder and 6.08 points below k-reciprocal on the full tokens.
@@ -186,7 +206,164 @@ On this one image the dress, hair, and legs remain and much of the background is
 That picture does not establish that the selector keeps the person and drops the background across Market-1501.
 On this query against five gallery crops, the different identity stayed last with and without pruning, while two photographs of the same person exchanged second and third place.
 That list illustrates the selected tokens for this image.
-The Market-1501 numbers are Table~\ref{tab:prune}.
+The Market-1501 numbers for that first cut are Table~\ref{tab:prune}.
+The comparisons below use the same checkpoint and the same metric.
+
+\subsection{Validation on training identities}
+The validation split is built only from the 12{,}936 official training images.
+It has 751 query images, one per training identity, and 12{,}185 gallery images.
+The encoder was trained on these identities and on these source images, so a high score here is not evidence about unseen people.
+Block 9 with 96 retained patches was fixed from an earlier attention comparison on this split, before the official-test numbers in this revision were consulted.
+Table~\ref{tab:val} repeats the full encoder, the block-6 cut, that selected cut, and five random seeds on one Tesla T4.
+
+\begin{table}[t]
+\centering
+\caption{Training-derived validation on a Tesla T4. The encoder was trained on these identities. This is not the official Market-1501 test. k-reciprocal was not run.}
+\label{tab:val}
+\small
+\begin{tabular}{lcccc}
+\toprule
+Setting & mAP & Rank-1 & Rank-5 & Rank-10 \\
+\midrule
+Full encoder, 128 patches & 97.93 & 98.40 & 99.87 & 100.00 \\
+Attention, block 6, 64 patches & 88.30 & 94.01 & 98.40 & 99.47 \\
+Attention, block 9, 96 patches & 97.80 & 98.14 & 99.87 & 100.00 \\
+\midrule
+Random, block 9, 96, seed 11 & 96.51 & 97.87 & 99.60 & 100.00 \\
+Random, block 9, 96, seed 23 & 96.31 & 97.20 & 99.33 & 99.73 \\
+Random, block 9, 96, seed 37 & 96.52 & 97.87 & 99.60 & 100.00 \\
+Random, block 9, 96, seed 53 & 96.29 & 97.34 & 99.60 & 99.87 \\
+Random, block 9, 96, seed 71 & 95.63 & 97.07 & 99.73 & 100.00 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Every row uses all 751 queries. None were excluded.
+From the unrounded scores, the five random seeds have mean mAP 0.9625115899313140.
+
+Their mean Rank-1 is 0.9747003994673769.
+
+The sample standard deviation of mAP is 0.0036584177143161.
+
+The sample standard deviation of Rank-1 is 0.0037662145469323.
+Variation across random patch-selection seeds on a fixed split.
+It is not training uncertainty, a confidence interval, or uncertainty over unseen identities.
+Class attention at block 9 with 96 patches is 0.0155 mAP and 0.0067 Rank-1 above that random mean.
+
+\subsection{Official test, matched settings}
+Table~\ref{tab:official} is the official single-query test under the corrected code.
+It uses 3{,}368 queries and 15{,}913 gallery images after junk removal, with the usual same-person same-camera exclusions.
+All 3{,}368 queries had a valid positive.
+The full-encoder scores match Table~\ref{tab:visual} digit for digit.
+The block-6 Rank-1, Rank-5, and Rank-10 match Table~\ref{tab:prune}.
+The unrounded block-6 mAP is 0.748638535412029, which differs from the earlier file's 0.7486385022966894 by $3.3 \times 10^{-8}$.
+k-reciprocal was not run, so those rows are not repeated here.
+
+\begin{table}[t]
+\centering
+\caption{Official Market-1501 test on the same Tesla T4 and the same code revision. Raw cosine retrieval. k-reciprocal was not run. The historical k-reciprocal rows remain in Table~\ref{tab:prune}.}
+\label{tab:official}
+\small
+\begin{tabular}{lcccc}
+\toprule
+Setting & mAP & Rank-1 & Rank-5 & Rank-10 \\
+\midrule
+Full encoder, 128 patches & 89.41 & 94.98 & 98.34 & 98.99 \\
+Attention, block 6, 64 patches & 74.86 & 88.93 & 95.84 & 97.57 \\
+Attention, block 9, 96 patches & 89.27 & 95.13 & 98.40 & 99.05 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On this test, block 6 with 64 patches is 0.1455 mAP and 0.0606 Rank-1 below the full encoder.
+Block 9 with 96 patches is 0.0014 mAP below the full encoder and 0.0015 Rank-1 above it.
+Those are the measured differences.
+They do not by themselves make block 9 a recommended operating point, because the configuration was not selected on this test.
+
+\begin{table}[t]
+\centering
+\caption{Official-test random controls at the same block and patch count as the attention rows. Variation across random patch-selection seeds on a fixed split.}
+\label{tab:official-random}
+\small
+\begin{tabular}{llcccc}
+\toprule
+Cut & Seed & mAP & Rank-1 & Rank-5 & Rank-10 \\
+\midrule
+Block 6, 64 & 11 & 67.78 & 85.96 & 92.25 & 93.79 \\
+Block 6, 64 & 23 & 67.77 & 86.22 & 92.16 & 93.94 \\
+Block 6, 64 & 37 & 67.71 & 86.02 & 92.52 & 94.21 \\
+Block 6, 64 & 53 & 67.83 & 85.84 & 93.14 & 94.45 \\
+Block 6, 64 & 71 & 67.03 & 85.42 & 92.13 & 93.62 \\
+\midrule
+Block 9, 96 & 11 & 86.07 & 94.24 & 98.31 & 98.99 \\
+Block 9, 96 & 23 & 86.08 & 94.30 & 98.13 & 98.90 \\
+Block 9, 96 & 37 & 85.85 & 93.74 & 97.92 & 98.78 \\
+Block 9, 96 & 53 & 86.03 & 94.09 & 98.22 & 98.99 \\
+Block 9, 96 & 71 & 85.83 & 94.00 & 98.22 & 98.99 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+From the unrounded scores, the block-6 random seeds have mean mAP 0.6762634413730919.
+
+Their mean Rank-1 is 0.8589073634204276.
+
+The sample standard deviation of mAP is 0.0033407593919709.
+
+The sample standard deviation of Rank-1 is 0.0029720887782048.
+Class attention at that cut is 0.0724 mAP and 0.0303 Rank-1 above this mean.
+
+The block-9 random seeds have mean mAP 0.8597086249406314.
+
+Their mean Rank-1 is 0.9407363420427555.
+
+The sample standard deviation of mAP is 0.0012014133840245.
+
+The sample standard deviation of Rank-1 is 0.0022278303423164.
+Class attention at that cut is 0.0330 mAP and 0.0106 Rank-1 above this mean.
+Variation across random patch-selection seeds on a fixed split.
+
+\subsection{Measured latency}
+Table~\ref{tab:time} is a Tesla T4 timing of the device-resident encoder at block 6 with 64 patches.
+The input is already on the device.
+The measurement includes selection and the final normalization, and it excludes image loading.
+Each entry is the median wall-clock time of the 50 measured batches in that trial, in milliseconds, after 10 warm-up iterations.
+There were three trials.
+Method order was rotated with seed 553.
+CUDA-event medians were recorded separately and lie close to these wall-clock medians.
+The random row uses seed 11 only.
+Five-seed accuracy and this timing run are different measurements.
+
+\begin{table}[t]
+\centering
+\caption{Median batch wall time on a Tesla T4, in milliseconds. FP32, autocast off. Device-resident encoder only. Three trials are listed because the spread is part of the result.}
+\label{tab:time}
+\small
+\begin{tabular}{lccc}
+\toprule
+Method & Trial 1 & Trial 2 & Trial 3 \\
+\midrule
+\multicolumn{4}{l}{\emph{Batch 1}} \\
+Full encoder & 10.6 & 10.6 & 10.6 \\
+Attention, reference & 9.0 & 9.0 & 9.0 \\
+Attention, class-token row & 8.8 & 9.0 & 9.0 \\
+Random, seed 11 & 9.6 & 8.7 & 15.2 \\
+\midrule
+\multicolumn{4}{l}{\emph{Batch 32}} \\
+Full encoder & 241.5 & 249.6 & 313.7 \\
+Attention, reference & 183.0 & 224.2 & 243.8 \\
+Attention, class-token row & 187.6 & 228.0 & 243.1 \\
+Random, seed 11 & 172.0 & 206.4 & 229.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At batch 1, both attention implementations are faster than the full encoder in every trial, by about 1.5\,ms.
+Random selection is not stable: its third median is 15.2\,ms.
+At batch 32 the full encoder itself moves from 241.5\,ms to 313.7\,ms.
+That spread is larger than several of the gaps between methods.
+The stored ratios against a pooled full-encoder median are therefore not an established speedup.
+Peak CUDA memory allocated for one forward, after the peak counter was reset, was about 701--704\,MB at batch 1 and 931--935\,MB at batch 32.
 
 \begin{figure}[t]
 \centering
@@ -196,35 +373,47 @@ The Market-1501 numbers are Table~\ref{tab:prune}.
 \end{figure}
 
 \section{Discussion}
-The experiment has one intervention and a matched pair of evaluations.
-The person, the cameras, the checkpoint, and the metric stay fixed.
-Only the token sequence changes.
-That is what makes the 14.55-point mAP gap interpretable: it is the accuracy loss from discarding the 64 patches the class token attended to least, inside a model that still expected to see them.
-It is not a measurement of saved computation.
+The checkpoint, the descriptor, and the Market-1501 metric stay fixed.
+What changes is the token sequence: which patches continue, after which block, and how many.
+On the official test, discarding 64 patches after block 6 costs 14.55 points of mAP and 6.06 points of Rank-1.
+Discarding 32 patches after block 9 changes the same test by 0.14 points of mAP downward and 0.15 points of Rank-1 upward.
+That second difference is small, and the setting was not chosen on the official test.
+Cost in those sentences means retrieval accuracy.
+It is not the latency in Table~\ref{tab:time}.
 
-Rank-10 remains high, which means a true match is still usually inside the first ten allowed gallery images.
-It does not show that identity information sits only in the retained patch locations.
-The figure is one image, and those tokens have already exchanged information with their neighbours.
-k-reciprocal can repair a large part of the damage without looking at tokens at all.
-The pruned vectors are weaker, and they are not unstructured.
-Neighbor relations among them still carry identity.
+Class attention is above the five-seed random mean at both cuts.
+The gap is larger when 64 patches remain after block 6 than when 96 remain after block 9.
+The sample standard deviation describes seed-to-seed variation on one fixed split.
+It does not describe a new set of people.
 
-The limits are equally specific.
-The keep ratio is one half, and the cut is only after layer 6.
-A later layer would discard less computation and might discard less accuracy.
-An earlier layer would do the opposite.
-This paper does not report that sweep, so it does not claim that layer 6 or 64 patches is the best operating point.
+Rank-10 stays high under the block-6 cut, so a true match is still usually inside the first ten allowed gallery images.
+That does not show that identity information sits only in the retained patches.
+By the pruning block, the class token and the patch tokens have already mixed.
+Figure~\ref{fig:prune} is one query.
+k-reciprocal, on the earlier files only, recovers much of the block-6 mAP without looking at tokens.
+It was not rerun for block 9 or for the random controls, so those rows cannot be compared with it.
+
+The timing result is separate.
+At batch 1 the attention paths are faster than the full encoder in all three trials, by about 1.5\,ms.
+At batch 32 the full encoder's own medians already differ by more than 70\,ms.
+A ratio against that moving baseline is not an established speedup.
+The class-token-row implementation is a timing comparison only.
+Accuracy tables use the reference attention scores.
+
+The limits are specific.
+Only two cuts were measured, both chosen before the official-test comparison.
+The paper does not claim that block 9 or 96 patches is the best operating point.
 The checkpoint was not fine-tuned after the rule was inserted.
-A model trained with the same drop could close some of the gap, and that comparison is not available here.
-Finally, the selection rule is the class-attention rule from image classification \cite{liang2022evit}.
-The contribution is the measurement of that rule on person re-identification, under a frozen CLIP-ReID checkpoint and the official Market-1501 protocol.
+The selection rule is the class-attention rule from image classification \cite{liang2022evit}, applied once after a complete block, without the training or token fusion used by EViT.
+The contribution is the measurement on person re-identification.
 
 \section{Conclusion}
 A frozen CLIP-ReID checkpoint approximately reproduces the published Market-1501 operating point, at 89.41\% mAP and 94.98\% Rank-1.
-Inside that transformer, the class token selects 64 of 128 patches after layer 6, and the remaining layers rank people from 65 tokens instead of 129.
-On all 3{,}368 queries the pruned ranking scores 74.86\% mAP and 88.93\% Rank-1.
-k-reciprocal raises the pruned result to 88.40\% mAP and does not recover the unpruned list.
+After block 6, keeping the 64 patches most attended by the class token scores 74.86\% mAP and 88.93\% Rank-1 on all 3{,}368 queries.
 The accuracy cost of that removal is 14.55 points of mAP.
+After block 9, keeping 96 patches scores 89.27\% mAP and 95.13\% Rank-1.
+Five random seeds at each cut score below the matching class-attention row.
+The Tesla T4 timings do not establish a speedup.
 The patch figure shows one query only.
 
 \bibliographystyle{plainnat}
