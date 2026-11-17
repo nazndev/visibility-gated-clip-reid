@@ -1,0 +1,97 @@
+{
+  "kind": "derived_summary_of_existing_artifacts",
+  "not_a_new_experiment": true,
+  "not_a_reconstruction_of_unavailable_json": true,
+  "reporting_revision_reference": "24e36acd2367f952eccdab4fb1fada9ef1e37180",
+  "execution_revision": "d143dbdbd690f70315cb706403980eddf09279e9",
+  "full_validation": {
+    "origin": "saved stdout from notebooks/colab_iteration2_v2.ipynb at commit c2a5246",
+    "displayed_in_current_notebook_cell_index": 7,
+    "displayed_in_current_notebook_heading": "# Cell 5 \u2014 one experiment. Change only this cell, then run it alone.",
+    "inference_rerun": false,
+    "tesla_t4_source": "Install cell in commit c2a5246, headed 'Cell 3 \u2014 install'. That cell printed '2.15.0+cu132 True Tesla T4'. The current notebook still shows that install stdout at cell index 4.",
+    "gpu_field_inside_score_record": "unknown",
+    "execution_sha256": "8fc02a1f619bd1f3c9d60459dfd44829e2729981fa7f17a4b3bc52dc4895cdcf",
+    "execution_source_sha256": "284a151018860cb7bb6ecad600c4d20ad604a58c47bd3694e9d6ab4af9487210",
+    "checkpoint_sha256": "bedc8fcc37f296045df19d901b162dd032bfa85d9b4f2406eff8313536d444dc"
+  },
+  "shortlist_hit_rate_note": "Present only on the historical JSON files. It is a raw top-five rate and is not CMC Rank-5.",
+  "sample_sd": "statistics.stdev, divisor n-1, computed from unrounded mAP and Rank-1.",
+  "display_checks": {
+    "official_full": {
+      "mAP": 0.8941489338504723,
+      "rank1": 0.9498218527315915,
+      "mAP_display": 89.41,
+      "rank1_display": 94.98
+    },
+    "official_attn_b6": {
+      "mAP": 0.748638535412029,
+      "rank1": 0.8892517814726841,
+      "mAP_display": 74.86,
+      "rank1_display": 88.93
+    },
+    "official_attn_b9": {
+      "mAP": 0.8927224222532428,
+      "rank1": 0.9513064133016627,
+      "mAP_display": 89.27,
+      "rank1_display": 95.13
+    },
+    "val_full": {
+      "mAP": 0.9792794205924563,
+      "rank1": 0.9840213049267643,
+      "mAP_display": 97.93,
+      "rank1_display": 98.4
+    },
+    "val_attn_b6": {
+      "mAP": 0.8830427779111383,
+      "rank1": 0.9400798934753661,
+      "mAP_display": 88.3,
+      "rank1_display": 94.01
+    },
+    "val_attn_b9": {
+      "mAP": 0.9780343793577182,
+      "rank1": 0.9813581890812251,
+      "mAP_display": 97.8,
+      "rank1_display": 98.14
+    },
+    "official_random_b6": {
+      "n": 5,
+      "ddof": 1,
+      "mAP_mean": 0.6762634413730919,
+      "mAP_sample_sd": 0.0033407593919708564,
+      "rank1_mean": 0.8589073634204275,
+      "rank1_sample_sd": 0.002972088778204799,
+      "mAP_display": "67.63 \u00b1 0.33",
+      "rank1_display": "85.89 \u00b1 0.30"
+    },
+    "official_random_b9": {
+      "n": 5,
+      "ddof": 1,
+      "mAP_mean": 0.8597086249406314,
+      "mAP_sample_sd": 0.0012014133840244682,
+      "rank1_mean": 0.9407363420427554,
+      "rank1_sample_sd": 0.0022278303423163893,
+      "mAP_display": "85.97 \u00b1 0.12",
+      "rank1_display": "94.07 \u00b1 0.22"
+    },
+    "val_random_b9": {
+      "n": 5,
+      "ddof": 1,
+      "mAP_mean": 0.962511589931314,
+      "mAP_sample_sd": 0.00365841771431615,
+      "rank1_mean": 0.9747003994673769,
+      "rank1_sample_sd": 0.0037662145469323396,
+      "mAP_display": "96.25 \u00b1 0.37",
+      "rank1_display": "97.47 \u00b1 0.38"
+    }
+  },
+  "timing_peak_bytes": {
+    "batch_1_min": 700060160,
+    "batch_1_max": 703612928,
+    "batch_32_min": 931190784,
+    "batch_32_max": 935139840,
+    "methods": "full, cls_attention_reference, cls_attention_cls_row, random"
+  },
+  "memory_scope": "peak_cuda_bytes_allocated from the benchmark harness, including GPU-resident verification copies of parameters and buffers",
+  "block_9_timing": "not recorded"
+}

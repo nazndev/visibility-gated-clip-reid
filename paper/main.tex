@@ -11,7 +11,7 @@
 \usepackage[hidelinks]{hyperref}
 \usepackage[numbers,sort]{natbib}
 
-\title{Inference-Time Token Pruning for Person Re-Identification\\with a Frozen CLIP-ReID Transformer}
+\title{Inference-Time Token Pruning\\Evaluated on Person Re-Identification}
 \author{Nazmul Hasan Nazim \\ Student ID 2527369 \\[0.5em]
 CSE553.1 Computer Vision \\ Course faculty: Dr.\ Nabeel Mohammed (NbM)}
 \date{}
@@ -20,8 +20,9 @@ CSE553.1 Computer Vision \\ Course faculty: Dr.\ Nabeel Mohammed (NbM)}
 \maketitle
 
 \begin{abstract}
-Person re-identification ranks gallery photographs so that other views of the person in a query crop come first.
-This paper measures how inference-time patch selection, pruning depth, and the number of retained tokens change retrieval accuracy and measured latency in a frozen CLIP-ReID ViT-B/16 encoder.
+This paper studies inference-time token pruning in a frozen vision transformer.
+Person re-identification is the evaluation task: a query crop is used to rank other photographs of the same person.
+The measurement asks how patch selection, the block at which tokens are dropped, and the number of retained tokens change retrieval accuracy and measured latency in a frozen CLIP-ReID ViT-B/16 encoder.
 The encoder is not retrained.
 Selection, when used, runs after a complete transformer block.
 The class token is kept, surviving patches stay in their original spatial order, and the later blocks run on that shorter sequence.
@@ -35,6 +36,10 @@ The patch figure shows one query only.
 \end{abstract}
 
 \section{Introduction}
+A vision transformer spends later blocks on every patch token, even when the vector used for search is built from the class token.
+Token pruning asks whether those later blocks can run on a shorter sequence \cite{liang2022evit}.
+This paper makes that cut at inference time, inside a frozen checkpoint, and measures the effect with person re-identification.
+
 A re-identification system receives one cropped person and a gallery collected by other cameras.
 Its output is an ordering, not an identity in a closed set.
 Market-1501 made this protocol standard: 751 people for training, 750 disjoint people for testing, and a fixed rule for which gallery hits count \cite{zheng2015market}.
@@ -110,6 +115,19 @@ The draw for an image is fixed by the experiment seed and a hash of that image's
 It does not use the label, and it does not compute attention weights.
 The accuracy seeds are 11, 23, 37, 53, and 71.
 
+Figure~\ref{fig:flow} shows the sequence length in each block.
+The full encoder carries 129 tokens through all 12 blocks.
+After block 6, keeping 64 patches leaves 65 tokens for blocks 7--12.
+After block 9, keeping 96 patches leaves 97 tokens for blocks 10--12.
+The class token is inside every one of those counts.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\linewidth]{figures/token_flow.pdf}
+\caption{Sequence length at each block. Dark boxes are 129 tokens. Pale boxes are the shorter sequence after selection. The class token is kept, and selection runs after a complete block.}
+\label{fig:flow}
+\end{figure}
+
 The two cuts are after block 6, keeping 64 patches, and after block 9, keeping 96.
 The second was the additional configuration with the highest validation mAP in an earlier attention comparison.
 It was not chosen or changed using the official-test scores below.
@@ -121,10 +139,7 @@ Market-1501 is used under the standard single-query protocol.
 The files contain 12{,}936 training images of 751 identities, 3{,}368 query images, and 19{,}732 images in the gallery folder.
 Of those, 3{,}819 are junk and are removed, leaving 15{,}913 gallery images of the 750 test identities.
 No training identity appears in the test split.
-The checkpoint hash is
-\begin{center}
-\small\texttt{bedc8fcc37f296045df19d901b162dd032bfa85d9b4f2406eff8313536d444dc}.
-\end{center}
+Appendix~\ref{app:prov} lists the checkpoint hash, the execution revision, and the saved validation record.
 
 The first full-encoder and block-6 measurements were run on a Colab T4.
 The unpruned ranking was also run on an Apple M4 with Metal.
@@ -148,13 +163,13 @@ Both follow the usual Market-1501 definitions.
 \section{Results}
 \subsection{The unpruned checkpoint}
 Table~\ref{tab:visual} checks that the loaded weights are the published model before any token is removed.
-The checkpoint is within 0.2 points of mAP of the published number.
+The checkpoint is within 0.2 percentage points of mAP of the published number.
 Rank-1 is 94.98 against the published 95.50, a difference of 0.52 percentage points.
 That gap is small enough to treat the checkpoint as an approximate reproduction.
-k-reciprocal raises mAP by 5.07 points on these same features.
+k-reciprocal raises mAP by 5.07 percentage points on these same features.
 It uses gallery-gallery and query-query relations, so it is a different use of the vectors, not a change to the transformer.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption{Market-1501 single-query results for the frozen CLIP-ReID checkpoint, with every patch token kept. The published row is the ViT result without side-information embeddings.}
 \label{tab:visual}
@@ -173,7 +188,7 @@ k-reciprocal on the same features & 94.48 & 95.37 & 97.89 & 98.63 \\
 Table~\ref{tab:prune} repeats the test after the cut in Section 3.
 The gallery, the queries, the metric, and the checkpoint are unchanged.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption{The same Market-1501 test after keeping 64 of 128 patch tokens. Layers 7--12 see 65 tokens, including the class token.}
 \label{tab:prune}
@@ -190,11 +205,11 @@ k-reciprocal, 64 patches & 65 & 88.40 & 90.62 & 95.13 & 96.26 \\
 \end{table}
 
 Here, cost means the loss in retrieval accuracy, not a measured change in latency or FLOPs.
-Keeping half of the patches costs 14.55 points of mAP.
-The unrounded Rank-1 drop is 6.06 points; subtracting the two-decimal table entries gives 6.05.
+Keeping half of the patches costs 14.55 percentage points of mAP.
+The unrounded Rank-1 drop is 6.06 percentage points; subtracting the two-decimal table entries gives 6.05.
 Rank-10 falls only from 98.99 to 97.57.
 The first true match is often still near the front, while the order of the rest of the true matches is worse, which is why mAP moves more than Rank-1.
-k-reciprocal recovers 13.54 points of the pruned mAP, from 74.86 to 88.40, and still finishes 1.01 points below the unpruned encoder and 6.08 points below k-reciprocal on the full tokens.
+k-reciprocal recovers 13.54 percentage points of the pruned mAP, from 74.86 to 88.40, and still finishes 1.01 percentage points below the unpruned encoder and 6.08 percentage points below k-reciprocal on the full tokens.
 A separate raw top-five check, computed before same-person same-camera removal, finds a true cross-camera match in that prefix for 90.88\% of queries, down from 93.76\%.
 That figure is not CMC Rank-5, which is 95.84 after the protocol filter.
 The share of all true gallery matches that sit in those five raw positions falls from 16.88\% to 15.90\%.
@@ -211,18 +226,25 @@ That list illustrates the selected tokens for this image.
 The Market-1501 numbers for that first cut are Table~\ref{tab:prune}.
 The comparisons below use the same checkpoint and the same metric.
 
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.38\linewidth]{figures/0001_c1s1_001051_00_keep50.png}
+\caption{Query 0001, camera 1, after keeping 64 of 128 patches. Dark blocks were dropped after block 6. The class token is kept. This is one query.}
+\label{fig:prune}
+\end{figure}
+
 \subsection{Validation on training identities}
 The validation split is built only from the 12{,}936 official training images.
 It has 751 query images, one per training identity, and 12{,}185 gallery images.
 The encoder was trained on these identities and on these source images, so a high score here is not evidence about unseen people.
 Block 9 with 96 retained patches was fixed from an earlier attention comparison on this split, before the official-test numbers in this revision were consulted.
 Table~\ref{tab:val} gives the full encoder, the block-6 cut, that selected cut, and five random seeds.
-The full-encoder row is the score saved in notebook commit \texttt{c2a5246}.
-That record uses this training-derived split, 751 queries and 12{,}185 gallery images, code revision \texttt{d143dbdbd690f70315cb706403980eddf09279e9}, and checkpoint \texttt{bedc8fcc37f296045df19d901b162dd032bfa85d9b4f2406eff8313536d444dc}.
-The install cell in that same saved notebook printed torch 2.15.0+cu132 on a Tesla T4.
-The current notebook displays that saved output.
-The encoder was not rerun for this report.
-The other rows are the outputs still printed in the current notebook, from the same code revision.
+The full-encoder row is the stdout saved in notebook commit \texttt{c2a5246}.
+Inference was not rerun to display it.
+The Tesla T4 name for that session comes from the install cell in the same saved notebook, not from a GPU field in the score record.
+The execution revision is \texttt{d143dbd}, the revision that produced the recorded results.
+Hashes are in Appendix~\ref{app:prov}.
+The other rows are the outputs printed in the current notebook.
 
 \begin{table}[H]
 \centering
@@ -314,6 +336,14 @@ Across the five block-9 random seeds, the unrounded scores give 85.97 $\pm$ 0.12
 Class attention at that cut is 3.30 percentage points of mAP and 1.06 percentage points of Rank-1 above this mean.
 Here $\pm$ is the sample standard deviation across five random patch-selection seeds on a fixed split.
 It is not training uncertainty or a confidence interval.
+Figure~\ref{fig:acc} shows the same official-test comparison.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\linewidth]{figures/official_test_accuracy.pdf}
+\caption{Official-test cosine retrieval. Random bars are the five-seed mean, with the sample standard deviation. The full encoder and the two attention settings are single measurements and have no error bar. The vertical axis starts at 55.}
+\label{fig:acc}
+\end{figure}
 
 \FloatBarrier
 \subsection{Measured latency}
@@ -357,15 +387,17 @@ At batch 32 the full encoder itself moves from 241.5\,ms to 313.7\,ms.
 That spread is larger than several of the gaps between methods.
 The stored ratios against a pooled full-encoder median are therefore not an established speedup.
 Across the four timed methods, the recorded peak CUDA allocation is 700{,}060{,}160 to 703{,}612{,}928 bytes at batch 1 and 931{,}190{,}784 to 935{,}139{,}840 bytes at batch 32.
-Each figure is the allocation observed in the benchmark harness after the peak counter was reset for one extra forward.
+Each recorded peak is the allocation observed in the benchmark harness after the peak counter was reset for one extra forward.
 The harness keeps GPU-resident copies of the parameters and buffers for the state check, so this peak includes those verification copies.
 It is not an isolated inference-only memory requirement.
+Figure~\ref{fig:time} plots every recorded trial median.
+Block 9 with 96 patches has no timing measurement, so it is not placed on this figure.
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
-\includegraphics[width=0.42\linewidth]{figures/0001_c1s1_001051_00_keep50.png}
-\caption{Query 0001, camera 1, after keeping 64 of 128 patches. Dark blocks were dropped after layer 6. The class token is kept.}
-\label{fig:prune}
+\includegraphics[width=0.98\linewidth]{figures/timing_trials.pdf}
+\caption{Three trial medians for each timed method at block 6 with 64 patches. Block 9 with 96 patches was not timed. The batch-32 panel shows the full encoder's own spread. These medians do not establish a speedup.}
+\label{fig:time}
 \end{figure}
 
 \FloatBarrier
@@ -415,6 +447,38 @@ After block 9, keeping 96 patches scores 89.27\% mAP and 95.13\% Rank-1.
 Five random seeds at each cut score below the matching class-attention row.
 The Tesla T4 timings do not establish a speedup.
 The patch figure shows one query only.
+
+\appendix
+\section{Recorded provenance}
+\label{app:prov}
+The measurements were produced by execution revision
+\begin{center}
+\small\texttt{d143dbdbd690f70315cb706403980eddf09279e9}.
+\end{center}
+The numerical paper checked in reporting revision
+\begin{center}
+\small\texttt{24e36acd2367f952eccdab4fb1fada9ef1e37180}
+\end{center}
+uses that record.
+This presentation keeps those values and does not rerun inference.
+
+The full-encoder validation row is the stdout saved in notebook commit \texttt{c2a5246} and displayed in the current notebook.
+That score record contains no GPU field.
+The Tesla T4 name comes from the install cell in the same saved notebook, which printed torch 2.15.0+cu132 on a Tesla T4.
+
+The checkpoint is
+\begin{center}
+\small\texttt{bedc8fcc37f296045df19d901b162dd0}\\
+\texttt{32bfa85d9b4f2406eff8313536d444dc}.
+\end{center}
+The corrected runs share source snapshot
+\begin{center}
+\small\texttt{284a151018860cb7bb6ecad600c4d20a}\\
+\texttt{d604a58c47bd3694e9d6ab4af9487210}.
+\end{center}
+Derived tables, with full precision and each notebook cell index, are in \path{results/paper_summary/}.
+Those files summarize existing artifacts.
+They are not new experiment outputs.
 
 \bibliographystyle{plainnat}
 \bibliography{references}

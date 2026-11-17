@@ -1,0 +1,82 @@
+{
+  "kind": "derived_summary_of_existing_artifacts",
+  "not_a_new_experiment": true,
+  "checks": {
+    "official_full": {
+      "mAP": 0.8941489338504723,
+      "rank1": 0.9498218527315915,
+      "mAP_display": 89.41,
+      "rank1_display": 94.98
+    },
+    "official_attn_b6": {
+      "mAP": 0.748638535412029,
+      "rank1": 0.8892517814726841,
+      "mAP_display": 74.86,
+      "rank1_display": 88.93
+    },
+    "official_attn_b9": {
+      "mAP": 0.8927224222532428,
+      "rank1": 0.9513064133016627,
+      "mAP_display": 89.27,
+      "rank1_display": 95.13
+    },
+    "val_full": {
+      "mAP": 0.9792794205924563,
+      "rank1": 0.9840213049267643,
+      "mAP_display": 97.93,
+      "rank1_display": 98.4
+    },
+    "val_attn_b6": {
+      "mAP": 0.8830427779111383,
+      "rank1": 0.9400798934753661,
+      "mAP_display": 88.3,
+      "rank1_display": 94.01
+    },
+    "val_attn_b9": {
+      "mAP": 0.9780343793577182,
+      "rank1": 0.9813581890812251,
+      "mAP_display": 97.8,
+      "rank1_display": 98.14
+    },
+    "official_random_b6": {
+      "n": 5,
+      "ddof": 1,
+      "mAP_mean": 0.6762634413730919,
+      "mAP_sample_sd": 0.0033407593919708564,
+      "rank1_mean": 0.8589073634204275,
+      "rank1_sample_sd": 0.002972088778204799,
+      "mAP_display": "67.63 \u00b1 0.33",
+      "rank1_display": "85.89 \u00b1 0.30"
+    },
+    "official_random_b9": {
+      "n": 5,
+      "ddof": 1,
+      "mAP_mean": 0.8597086249406314,
+      "mAP_sample_sd": 0.0012014133840244682,
+      "rank1_mean": 0.9407363420427554,
+      "rank1_sample_sd": 0.0022278303423163893,
+      "mAP_display": "85.97 \u00b1 0.12",
+      "rank1_display": "94.07 \u00b1 0.22"
+    },
+    "val_random_b9": {
+      "n": 5,
+      "ddof": 1,
+      "mAP_mean": 0.962511589931314,
+      "mAP_sample_sd": 0.00365841771431615,
+      "rank1_mean": 0.9747003994673769,
+      "rank1_sample_sd": 0.0037662145469323396,
+      "mAP_display": "96.25 \u00b1 0.37",
+      "rank1_display": "97.47 \u00b1 0.38"
+    }
+  },
+  "historical_cosine_full_mAP": 0.8941489338504723,
+  "historical_cosine_block6_mAP": 0.7486385022966894,
+  "historical_kreciprocal_full_mAP": 0.9448037772981412,
+  "historical_kreciprocal_block6_mAP": 0.8840089704663325,
+  "published_rank1_gap_percentage_points": 0.5178147268408537,
+  "counts": {
+    "notebook_score_rows": 21,
+    "historical_rows": 6,
+    "timing_rows": 24
+  }
+}

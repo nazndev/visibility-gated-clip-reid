@@ -2,7 +2,18 @@
 
 Nazmul Hasan Nazim
 
-This repository measures person re-identification with a frozen CLIP-ReID ViT-B/16 encoder on Market-1501. The current study asks how inference-time patch selection, pruning depth, and the number of retained tokens change retrieval accuracy and measured inference cost.
+## Start here
+
+Token pruning is the subject. Person re-identification is the task used to measure it.
+
+Read in this order:
+
+1. [paper/main.pdf](paper/main.pdf) — the course paper.
+2. [paper/slides.pdf](paper/slides.pdf) — the 12-slide explanation. Rehearse from [docs/defence_guide.md](docs/defence_guide.md).
+3. [results/paper_summary/README.md](results/paper_summary/README.md) — tables derived from the recorded outputs.
+4. [notebooks/colab_iteration2_v2.ipynb](notebooks/colab_iteration2_v2.ipynb) — the notebook that printed the Tesla T4 scores. The measurements were produced by code revision `d143dbdbd690f70315cb706403980eddf09279e9`.
+
+This repository measures inference-time token pruning in a frozen CLIP-ReID ViT-B/16 encoder. Market-1501 person re-identification is the evaluation task. The current study asks how inference-time patch selection, pruning depth, and the number of retained tokens change retrieval accuracy and measured inference cost.
 
 A 256×128 crop is 128 patches plus one class token. Selection, when enabled, runs after a complete transformer block. The class token is kept, the chosen patches are gathered into a shorter sequence in their original spatial order, and the remaining blocks run on that sequence. Positional embeddings are added once, before the transformer. There is no token fusion and no extra trained scorer.
 
@@ -28,7 +39,7 @@ PYTHONPATH=src .venv/bin/python -m unittest tests.test_iteration2
 
 ## Historical material
 
-`notebooks/colab_first_iteration.ipynb` records the first measurement, including a Qwen2.5-VL judgment experiment that was not finished and is not part of the current study. `paper/main.pdf` reports that first pruning measurement. `notebooks/colab_iteration2.ipynb` is the notebook for this iteration. It checks out an explicit git revision and runs one configuration at a time.
+`notebooks/colab_first_iteration.ipynb` records the first measurement, including a Qwen2.5-VL judgment experiment that was not finished and is not part of the current study. `notebooks/colab_iteration2.ipynb` keeps the earlier iteration. The current recorded notebook is `notebooks/colab_iteration2_v2.ipynb`. `paper/main.pdf` is the course paper for the corrected measurements.
 
 ## Sources
 
