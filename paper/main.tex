@@ -6,6 +6,8 @@
 \usepackage{booktabs}
 \usepackage{amsmath}
 \usepackage{graphicx}
+\usepackage{placeins}
+\usepackage{float}
 \usepackage[hidelinks]{hyperref}
 \usepackage[numbers,sort]{natbib}
 
@@ -214,11 +216,17 @@ The validation split is built only from the 12{,}936 official training images.
 It has 751 query images, one per training identity, and 12{,}185 gallery images.
 The encoder was trained on these identities and on these source images, so a high score here is not evidence about unseen people.
 Block 9 with 96 retained patches was fixed from an earlier attention comparison on this split, before the official-test numbers in this revision were consulted.
-Table~\ref{tab:val} repeats the full encoder, the block-6 cut, that selected cut, and five random seeds on one Tesla T4.
+Table~\ref{tab:val} gives the full encoder, the block-6 cut, that selected cut, and five random seeds.
+The full-encoder row is the score saved in notebook commit \texttt{c2a5246}.
+That record uses this training-derived split, 751 queries and 12{,}185 gallery images, code revision \texttt{d143dbdbd690f70315cb706403980eddf09279e9}, and checkpoint \texttt{bedc8fcc37f296045df19d901b162dd032bfa85d9b4f2406eff8313536d444dc}.
+The install cell in that same saved notebook printed torch 2.15.0+cu132 on a Tesla T4.
+The current notebook displays that saved output.
+The encoder was not rerun for this report.
+The other rows are the outputs still printed in the current notebook, from the same code revision.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
-\caption{Training-derived validation on a Tesla T4. The encoder was trained on these identities. This is not the official Market-1501 test. k-reciprocal was not run.}
+\caption{Training-derived validation. The encoder was trained on these identities. This is not the official Market-1501 test. k-reciprocal was not run. The full-encoder row is the saved score from notebook commit \texttt{c2a5246}; the other rows are printed in the current notebook.}
 \label{tab:val}
 \small
 \begin{tabular}{lcccc}
@@ -239,17 +247,12 @@ Random, block 9, 96, seed 71 & 95.63 & 97.07 & 99.73 & 100.00 \\
 \end{table}
 
 Every row uses all 751 queries. None were excluded.
-From the unrounded scores, the five random seeds have mean mAP 0.9625115899313140.
-
-Their mean Rank-1 is 0.9747003994673769.
-
-The sample standard deviation of mAP is 0.0036584177143161.
-
-The sample standard deviation of Rank-1 is 0.0037662145469323.
-Variation across random patch-selection seeds on a fixed split.
+Across the five random seeds at block 9 with 96 patches, the unrounded scores give 96.25 $\pm$ 0.37 mAP and 97.47 $\pm$ 0.38 Rank-1.
+Here $\pm$ is the sample standard deviation across five random patch-selection seeds on a fixed split.
 It is not training uncertainty, a confidence interval, or uncertainty over unseen identities.
-Class attention at block 9 with 96 patches is 0.0155 mAP and 0.0067 Rank-1 above that random mean.
+Class attention at that cut is 1.55 percentage points of mAP and 0.67 percentage points of Rank-1 above this mean.
 
+\FloatBarrier
 \subsection{Official test, matched settings}
 Table~\ref{tab:official} is the official single-query test under the corrected code.
 It uses 3{,}368 queries and 15{,}913 gallery images after junk removal, with the usual same-person same-camera exclusions.
@@ -275,10 +278,11 @@ Attention, block 9, 96 patches & 89.27 & 95.13 & 98.40 & 99.05 \\
 \end{tabular}
 \end{table}
 
-On this test, block 6 with 64 patches is 0.1455 mAP and 0.0606 Rank-1 below the full encoder.
-Block 9 with 96 patches is 0.0014 mAP below the full encoder and 0.0015 Rank-1 above it.
+On this test, block 6 with 64 patches is 14.55 percentage points of mAP and 6.06 percentage points of Rank-1 below the full encoder.
+Block 9 with 96 patches is 0.14 percentage points of mAP below the full encoder and 0.15 percentage points of Rank-1 above it.
 Those are the measured differences.
-They do not by themselves make block 9 a recommended operating point, because the configuration was not selected on this test.
+Block 9 with 96 patches was fixed before this official-test comparison.
+The recorded results do not establish a superior overall accuracy--cost operating point.
 
 \begin{table}[t]
 \centering
@@ -304,25 +308,14 @@ Block 9, 96 & 71 & 85.83 & 94.00 & 98.22 & 98.99 \\
 \end{tabular}
 \end{table}
 
-From the unrounded scores, the block-6 random seeds have mean mAP 0.6762634413730919.
+Across the five block-6 random seeds, the unrounded scores give 67.63 $\pm$ 0.33 mAP and 85.89 $\pm$ 0.30 Rank-1.
+Class attention at that cut is 7.24 percentage points of mAP and 3.03 percentage points of Rank-1 above this mean.
+Across the five block-9 random seeds, the unrounded scores give 85.97 $\pm$ 0.12 mAP and 94.07 $\pm$ 0.22 Rank-1.
+Class attention at that cut is 3.30 percentage points of mAP and 1.06 percentage points of Rank-1 above this mean.
+Here $\pm$ is the sample standard deviation across five random patch-selection seeds on a fixed split.
+It is not training uncertainty or a confidence interval.
 
-Their mean Rank-1 is 0.8589073634204276.
-
-The sample standard deviation of mAP is 0.0033407593919709.
-
-The sample standard deviation of Rank-1 is 0.0029720887782048.
-Class attention at that cut is 0.0724 mAP and 0.0303 Rank-1 above this mean.
-
-The block-9 random seeds have mean mAP 0.8597086249406314.
-
-Their mean Rank-1 is 0.9407363420427555.
-
-The sample standard deviation of mAP is 0.0012014133840245.
-
-The sample standard deviation of Rank-1 is 0.0022278303423164.
-Class attention at that cut is 0.0330 mAP and 0.0106 Rank-1 above this mean.
-Variation across random patch-selection seeds on a fixed split.
-
+\FloatBarrier
 \subsection{Measured latency}
 Table~\ref{tab:time} is a Tesla T4 timing of the device-resident encoder at block 6 with 64 patches.
 The input is already on the device.
@@ -363,7 +356,10 @@ Random selection is not stable: its third median is 15.2\,ms.
 At batch 32 the full encoder itself moves from 241.5\,ms to 313.7\,ms.
 That spread is larger than several of the gaps between methods.
 The stored ratios against a pooled full-encoder median are therefore not an established speedup.
-Peak CUDA memory allocated for one forward, after the peak counter was reset, was about 701--704\,MB at batch 1 and 931--935\,MB at batch 32.
+Across the four timed methods, the recorded peak CUDA allocation is 700{,}060{,}160 to 703{,}612{,}928 bytes at batch 1 and 931{,}190{,}784 to 935{,}139{,}840 bytes at batch 32.
+Each figure is the allocation observed in the benchmark harness after the peak counter was reset for one extra forward.
+The harness keeps GPU-resident copies of the parameters and buffers for the state check, so this peak includes those verification copies.
+It is not an isolated inference-only memory requirement.
 
 \begin{figure}[t]
 \centering
@@ -372,12 +368,15 @@ Peak CUDA memory allocated for one forward, after the peak counter was reset, wa
 \label{fig:prune}
 \end{figure}
 
+\FloatBarrier
 \section{Discussion}
 The checkpoint, the descriptor, and the Market-1501 metric stay fixed.
 What changes is the token sequence: which patches continue, after which block, and how many.
-On the official test, discarding 64 patches after block 6 costs 14.55 points of mAP and 6.06 points of Rank-1.
-Discarding 32 patches after block 9 changes the same test by 0.14 points of mAP downward and 0.15 points of Rank-1 upward.
-That second difference is small, and the setting was not chosen on the official test.
+On the official test, discarding 64 patches after block 6 costs 14.55 percentage points of mAP and 6.06 percentage points of Rank-1.
+Discarding 32 patches after block 9 changes the same test by 0.14 percentage points of mAP downward and 0.15 percentage points of Rank-1 upward.
+That second difference is small.
+Block 9 with 96 patches was fixed before the official-test comparison.
+The recorded results do not establish a superior overall accuracy--cost operating point.
 Cost in those sentences means retrieval accuracy.
 It is not the latency in Table~\ref{tab:time}.
 
@@ -401,8 +400,9 @@ The class-token-row implementation is a timing comparison only.
 Accuracy tables use the reference attention scores.
 
 The limits are specific.
-Only two cuts were measured, both chosen before the official-test comparison.
-The paper does not claim that block 9 or 96 patches is the best operating point.
+Only two cuts were measured.
+Block 9 with 96 patches was fixed before the official-test comparison.
+The recorded results do not establish a superior overall accuracy--cost operating point.
 The checkpoint was not fine-tuned after the rule was inserted.
 The selection rule is the class-attention rule from image classification \cite{liang2022evit}, applied once after a complete block, without the training or token fusion used by EViT.
 The contribution is the measurement on person re-identification.

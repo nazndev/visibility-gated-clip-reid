@@ -1,0 +1,200 @@
+\documentclass[aspectratio=169,11pt]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{seahorse}
+\usepackage{booktabs}
+\usepackage{graphicx}
+
+\title[Token pruning for person re-ID]{Inference-Time Token Pruning\\for Person Re-Identification}
+\subtitle{A frozen CLIP-ReID encoder on Market-1501}
+\author[Nazmul Hasan Nazim]{Nazmul Hasan Nazim\\Student ID 2527369}
+\institute[CSE553.1]{CSE553.1 Computer Vision\\Course faculty: Dr.\ Nabeel Mohammed (NbM)}
+\date{}
+\setbeamertemplate{navigation symbols}{}
+
+\begin{document}
+
+\begin{frame}
+\titlepage
+\end{frame}
+
+\begin{frame}{What the project does}
+\begin{itemize}
+\item One cropped person goes in.
+\item The system orders a gallery so other photos of that person come first.
+\item The encoder is a published CLIP-ReID checkpoint.
+\item It is frozen. Nothing is retrained.
+\item During inference, some patch tokens are dropped and the later layers run on the shorter sequence.
+\end{itemize}
+\vspace{0.6em}
+The study measures how that drop changes retrieval accuracy and measured latency.
+\end{frame}
+
+\begin{frame}{The dataset}
+Market-1501 is an outdoor campus with six cameras.
+\begin{itemize}
+\item Training: 12{,}936 images, 751 people.
+\item Official test: 3{,}368 queries, 750 different people.
+\item Gallery folder: 19{,}732 images. After junk removal: 15{,}913.
+\item A same-person, same-camera gallery photo does not count as a match.
+\end{itemize}
+\vspace{0.5em}
+Rank-1: the first allowed gallery photo is the right person.\\
+mAP: the whole list of true matches is in good order.
+\end{frame}
+
+\begin{frame}{The encoder}
+\begin{itemize}
+\item CLIP-ReID ViT-B/16, camera side-information off, no overlapping patches.
+\item Each $256 \times 128$ crop becomes 128 patches plus one class token: 129 tokens.
+\item The search vector is 1{,}280 dimensions, $\ell_2$-normalized. Score is cosine.
+\item Published operating point: 89.6\% mAP, 95.5\% Rank-1.
+\item This checkpoint on the official test: 89.41\% mAP, 94.98\% Rank-1.
+\end{itemize}
+\vspace{0.5em}
+Rank-1 is 0.52 percentage points below the published number.\\
+That is an approximate reproduction.
+\end{frame}
+
+\begin{frame}{The question}
+For this frozen encoder, three choices change together:
+\begin{enumerate}
+\item Which patches continue: class attention, or a random draw.
+\item After which block the cut is made.
+\item How many patches are kept.
+\end{enumerate}
+\vspace{0.7em}
+Two cuts were measured.
+\begin{itemize}
+\item After block 6, keep 64 of 128 patches. Later blocks see 65 tokens.
+\item After block 9, keep 96 of 128 patches. Later blocks see 97 tokens.
+\end{itemize}
+\vspace{0.4em}
+The class token is always kept. Positions are added once, before block 1.
+\end{frame}
+
+\begin{frame}{How a patch is chosen}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{Class attention}\\[0.4em]
+The class token's attention is averaged across heads.\\
+The highest-scoring patches stay, in their original order.\\
+The accuracy tables use the reference attention scores.
+\end{column}
+\begin{column}{0.48\textwidth}
+\textbf{Random}\\[0.4em]
+The same number of patches is drawn uniformly.\\
+Five seeds: 11, 23, 37, 53, 71.\\
+The draw does not use the person's identity.
+\end{column}
+\end{columns}
+\vspace{1em}
+Block 9 with 96 patches was fixed on a training-identity validation split before these official-test scores were used.
+\end{frame}
+
+\begin{frame}{Official test}
+3{,}368 queries. 15{,}913 gallery images. Raw cosine. Same Tesla T4.
+\begin{table}
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+Setting & mAP & Rank-1 \\
+\midrule
+Full encoder, 128 patches & 89.41 & 94.98 \\
+Attention, block 6, 64 patches & 74.86 & 88.93 \\
+Attention, block 9, 96 patches & 89.27 & 95.13 \\
+\midrule
+Random mean, block 6, 64 & 67.63 & 85.89 \\
+Random mean, block 9, 96 & 85.97 & 94.07 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\vspace{0.2em}
+\footnotesize
+Random means are from the unrounded scores of the five seeds.\\
+Sample standard deviation: variation across random patch-selection seeds on a fixed split.
+\end{frame}
+
+\begin{frame}{What the scores say}
+\begin{itemize}
+\item After block 6, keeping 64 patches costs 14.55 points of mAP and 6.06 points of Rank-1.
+\item After block 9, keeping 96 patches is 0.14 points of mAP below the full encoder and 0.15 points of Rank-1 above it.
+\item At both cuts, class attention scores above the five-seed random mean.
+\item The gap is larger when fewer patches remain.
+\end{itemize}
+\vspace{0.5em}
+These differences are retrieval accuracy.\\
+They are separate from the latency measurement.
+\end{frame}
+
+\begin{frame}{Validation chose the second cut}
+This split uses the 12{,}936 training images: 751 queries, 12{,}185 gallery images.\\
+The encoder was trained on these identities, so the scores are identity-seen.
+\begin{table}
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+Setting & mAP & Rank-1 \\
+\midrule
+Full encoder & 97.93 & 98.40 \\
+Attention, block 6, 64 & 88.30 & 94.01 \\
+Attention, block 9, 96 & 97.80 & 98.14 \\
+\bottomrule
+\end{tabular}
+\end{table}
+Block 9 with 96 patches had the higher validation mAP of the two attention cuts.\\
+The official test was not used to change that choice.
+\end{frame}
+
+\begin{frame}{Measured time on a Tesla T4}
+Device-resident encoder only. FP32. Block 6, 64 patches.\\
+Median batch wall time, three trials, in milliseconds.
+\begin{table}
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Method, batch 32 & Trial 1 & Trial 2 & Trial 3 \\
+\midrule
+Full encoder & 241.5 & 249.6 & 313.7 \\
+Attention, reference & 183.0 & 224.2 & 243.8 \\
+Random, seed 11 & 172.0 & 206.4 & 229.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+The full encoder itself moves by more than 70\,ms across trials.\\
+That spread is large enough that the ratios are not an established speedup.
+\end{frame}
+
+\begin{frame}{One query, shaded}
+\begin{columns}[c]
+\begin{column}{0.42\textwidth}
+\centering
+\includegraphics[height=0.72\textheight]{figures/0001_c1s1_001051_00_keep50.png}
+\end{column}
+\begin{column}{0.54\textwidth}
+Query \texttt{0001\_c1s1\_001051\_00}.\\[0.6em]
+Dark blocks were dropped after layer 6.\\
+64 of 128 patches stayed.\\[0.6em]
+This is the real Market-1501 photograph with the model's dropped patches shaded.\\[0.6em]
+By layer 6 the tokens have already mixed.\\
+The picture shows one query.
+\end{column}
+\end{columns}
+\end{frame}
+
+\begin{frame}{What to take from the project}
+\begin{itemize}
+\item A frozen CLIP-ReID checkpoint approximately reproduces the published Market-1501 score: 89.41\% mAP, 94.98\% Rank-1.
+\item Dropping half the patches after block 6 costs 14.55 points of mAP.
+\item Keeping 96 patches after block 9 stays close to the full encoder on the official test.
+\item Class attention beats a five-seed random draw at the same patch count.
+\item The Tesla T4 timings do not establish a speedup.
+\end{itemize}
+\vspace{0.6em}
+The contribution is this measurement.
+\end{frame}
+
+\end{document}
